@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const cp = require('child_process');
+const os = require('os');
 
 let terminalInstance = null;
 let boardStatusBarItem = null;
@@ -473,15 +474,40 @@ async function scanAndInstallSketchLibraries(sketchDir, cliPath, term) {
     vscode.window.showInformationMessage("Thruster: Library scan and install complete!");
 }
 
+let isBusy = false;
+
+function setBusy(busy) {
+    isBusy = busy;
+    vscode.commands.executeCommand('setContext', 'thruster.isBusy', busy);
+    updateState();
+}
+
+function waitForLockRelease(lockPath, maxTimeoutMs = 180000) {
+    return new Promise((resolve) => {
+        const start = Date.now();
+        const interval = setInterval(() => {
+            if (!fs.existsSync(lockPath) || (Date.now() - start > maxTimeoutMs)) {
+                clearInterval(interval);
+                resolve();
+            }
+        }, 200);
+    });
+}
+
 function updateState() {
     const config = loadConfig();
     const isInit = !!(config && config.board);
     vscode.commands.executeCommand('setContext', 'thruster.isInitialized', isInit);
+    vscode.commands.executeCommand('setContext', 'thruster.isBusy', isBusy);
 
     if (isInit) {
         if (initStatusBarItem) initStatusBarItem.hide();
         if (boardStatusBarItem) {
-            boardStatusBarItem.text = `$(circuit-board) ${config.boardName || config.board}`;
+            if (isBusy) {
+                boardStatusBarItem.text = `$(sync~spin) Thruster: Working...`;
+            } else {
+                boardStatusBarItem.text = `$(circuit-board) ${config.boardName || config.board}`;
+            }
             boardStatusBarItem.show();
         }
         if (portStatusBarItem) {
@@ -492,7 +518,7 @@ function updateState() {
         if (boardStatusBarItem) boardStatusBarItem.hide();
         if (portStatusBarItem) portStatusBarItem.hide();
         if (initStatusBarItem) {
-            initStatusBarItem.text = `$(rocket) Thruster: Init`;
+            initStatusBarItem.text = isBusy ? `$(sync~spin) Thruster: Busy...` : `$(rocket) Thruster: Init`;
             initStatusBarItem.show();
         }
     }
@@ -526,6 +552,11 @@ function activate(context) {
 
     // 2. Register Commands
     context.subscriptions.push(vscode.commands.registerCommand('thruster.init', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
+            return;
+        }
+
         const root = getWorkspaceRoot();
         if (!root) {
             vscode.window.showErrorMessage("Please open a workspace folder first.");
@@ -586,8 +617,13 @@ function activate(context) {
         vscode.window.showInformationMessage(`Thruster initialized for ${boardInfo.boardName}! Toolbar buttons are now ready.`);
     }));
 
-    // Compile Command (with Smart Library Resolver)
+    // Compile Command (with Smart Library Resolver & Busy Lock)
     context.subscriptions.push(vscode.commands.registerCommand('thruster.compile', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
+            return;
+        }
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found to compile. Please open an .ino file.");
@@ -599,14 +635,24 @@ function activate(context) {
         const cliPath = getCliPath();
         const term = getTerminal();
 
-        const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-        if (ok) {
-            vscode.window.showInformationMessage("Thruster: Compilation verified successfully!");
+        try {
+            setBusy(true);
+            const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+            if (ok) {
+                vscode.window.showInformationMessage("Thruster: Compilation verified successfully!");
+            }
+        } finally {
+            setBusy(false);
         }
     }));
 
-    // Flash Command (with Smart Library Resolver)
+    // Flash Command (with Smart Library Resolver & Busy Lock)
     context.subscriptions.push(vscode.commands.registerCommand('thruster.flash', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
+            return;
+        }
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found to flash. Please open an .ino file.");
@@ -624,15 +670,31 @@ function activate(context) {
         }
 
         const term = getTerminal();
-        const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-        if (ok) {
-            term.sendText(`Write-Host "=== Thruster: Flashing (Uploading) to ${port}... ===" -ForegroundColor Cyan`);
-            term.sendText(`& "${cliPath}" upload -p ${port} --fqbn ${fqbn} "${sketchDir}"`);
+        const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
+
+        try {
+            setBusy(true);
+            const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+            if (ok) {
+                fs.writeFileSync(lockFile, 'busy', 'utf8');
+                term.sendText(`Write-Host "=== Thruster: Flashing (Uploading) to ${port}... ===" -ForegroundColor Cyan`);
+                const uploadCmd = `try { & "${cliPath}" upload -p ${port} --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }`;
+                term.sendText(uploadCmd);
+                await waitForLockRelease(lockFile);
+            }
+        } finally {
+            try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
+            setBusy(false);
         }
     }));
 
-    // Flash & Monitor Command (with Smart Library Resolver)
+    // Flash & Monitor Command (with Smart Library Resolver & Busy Lock)
     context.subscriptions.push(vscode.commands.registerCommand('thruster.flashAndMonitor', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
+            return;
+        }
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found to flash. Please open an .ino file.");
@@ -651,15 +713,31 @@ function activate(context) {
         }
 
         const term = getTerminal();
-        const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-        if (ok) {
-            term.sendText(`Write-Host "=== Thruster: Flashing (Uploading) to ${port}... ===" -ForegroundColor Cyan`);
-            term.sendText(`& "${cliPath}" upload -p ${port} --fqbn ${fqbn} "${sketchDir}"; if ($LASTEXITCODE -eq 0) { Write-Host "\`n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===" -ForegroundColor Green; & "${cliPath}" monitor -p ${port} -c baudrate=${baud} }`);
+        const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
+
+        try {
+            setBusy(true);
+            const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+            if (ok) {
+                fs.writeFileSync(lockFile, 'busy', 'utf8');
+                term.sendText(`Write-Host "=== Thruster: Flashing (Uploading) to ${port}... ===" -ForegroundColor Cyan`);
+                const flashAndMonitorCmd = `try { & "${cliPath}" upload -p ${port} --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }; if ($LASTEXITCODE -eq 0) { Write-Host "\`n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===" -ForegroundColor Green; & "${cliPath}" monitor -p ${port} -c baudrate=${baud} }`;
+                term.sendText(flashAndMonitorCmd);
+                await waitForLockRelease(lockFile);
+            }
+        } finally {
+            try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
+            setBusy(false);
         }
     }));
 
     // Monitor Command
     context.subscriptions.push(vscode.commands.registerCommand('thruster.monitor', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: Cannot open Serial Monitor while compile or flash is in progress.");
+            return;
+        }
+
         const config = loadConfig();
         const baud = (config && config.baudRate) || 115200;
         const cliPath = getCliPath();
@@ -678,6 +756,11 @@ function activate(context) {
 
     // Select Port Command
     context.subscriptions.push(vscode.commands.registerCommand('thruster.selectPort', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: Cannot change port while compile or flash is in progress.");
+            return;
+        }
+
         const cliPath = getCliPath();
         const detected = await scanSerialPorts(cliPath);
         const items = [
@@ -703,6 +786,11 @@ function activate(context) {
 
     // Select Board Command (with core auto-installation)
     context.subscriptions.push(vscode.commands.registerCommand('thruster.selectBoard', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: Cannot change board while compile or flash is in progress.");
+            return;
+        }
+
         const cliPath = getCliPath();
         const boardInfo = await promptSelectBoard(cliPath);
         if (!boardInfo) return;
@@ -714,6 +802,11 @@ function activate(context) {
 
     // Scan & Install Missing Libraries Command
     context.subscriptions.push(vscode.commands.registerCommand('thruster.installLibraries', async () => {
+        if (isBusy) {
+            vscode.window.showWarningMessage("Thruster: Cannot scan libraries while compile or flash is in progress.");
+            return;
+        }
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found. Please open an .ino file.");

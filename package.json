@@ -41,42 +41,50 @@
       {
         "command": "thruster.init",
         "title": "Thruster: Initialize Project",
-        "icon": "$(rocket)"
+        "icon": "$(rocket)",
+        "enablement": "!thruster.isBusy"
       },
       {
         "command": "thruster.flash",
         "title": "Thruster: Flash (Upload)",
-        "icon": "$(zap)"
+        "icon": "$(zap)",
+        "enablement": "!thruster.isBusy"
       },
       {
         "command": "thruster.flashAndMonitor",
         "title": "Thruster: Flash & Monitor",
-        "icon": "$(run-all)"
+        "icon": "$(run-all)",
+        "enablement": "!thruster.isBusy"
       },
       {
         "command": "thruster.compile",
         "title": "Thruster: Compile / Verify",
-        "icon": "$(check)"
+        "icon": "$(check)",
+        "enablement": "!thruster.isBusy"
       },
       {
         "command": "thruster.monitor",
         "title": "Thruster: Serial Monitor",
-        "icon": "$(radio-tower)"
+        "icon": "$(radio-tower)",
+        "enablement": "!thruster.isBusy"
       },
       {
         "command": "thruster.selectPort",
         "title": "Thruster: Select COM Port",
-        "icon": "$(plug)"
+        "icon": "$(plug)",
+        "enablement": "!thruster.isBusy"
       },
       {
         "command": "thruster.selectBoard",
         "title": "Thruster: Select Board",
-        "icon": "$(circuit-board)"
+        "icon": "$(circuit-board)",
+        "enablement": "!thruster.isBusy"
       },
       {
         "command": "thruster.installLibraries",
         "title": "Thruster: Scan & Install Missing Libraries",
-        "icon": "$(cloud-download)"
+        "icon": "$(cloud-download)",
+        "enablement": "!thruster.isBusy"
       }
     ],
     "menus": {
