@@ -1,0 +1,138 @@
+{
+  "name": "thruster",
+  "displayName": "Thruster",
+  "description": "One-click Compile, Flash, and Serial Monitor for NodeMCU ESP32 and Arduino sketches in Antigravity IDE.",
+  "version": "0.1.0",
+  "publisher": "antigravity",
+  "icon": "Thruster.png",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "thruster",
+    "esp32",
+    "nodemcu",
+    "arduino",
+    "flash",
+    "serial",
+    "antigravity"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:cpp",
+    "onLanguage:c",
+    "onLanguage:arduino",
+    "workspaceContains:**/*.ino",
+    "onCommand:thruster.init",
+    "onCommand:thruster.flash",
+    "onCommand:thruster.flashAndMonitor",
+    "onCommand:thruster.compile",
+    "onCommand:thruster.monitor",
+    "onCommand:thruster.selectPort",
+    "onCommand:thruster.selectBoard",
+    "onCommand:thruster.installLibraries"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "thruster.init",
+        "title": "Thruster: Initialize Project",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "thruster.flash",
+        "title": "Thruster: Flash (Upload)",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "thruster.flashAndMonitor",
+        "title": "Thruster: Flash & Monitor",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "thruster.compile",
+        "title": "Thruster: Compile / Verify",
+        "icon": "$(check)"
+      },
+      {
+        "command": "thruster.monitor",
+        "title": "Thruster: Serial Monitor",
+        "icon": "$(radio-tower)"
+      },
+      {
+        "command": "thruster.selectPort",
+        "title": "Thruster: Select COM Port",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "thruster.selectBoard",
+        "title": "Thruster: Select Board",
+        "icon": "$(circuit-board)"
+      },
+      {
+        "command": "thruster.installLibraries",
+        "title": "Thruster: Scan & Install Missing Libraries",
+        "icon": "$(cloud-download)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "thruster.init",
+          "when": "resourceExtname == .ino && !thruster.isInitialized",
+          "group": "navigation@1.1"
+        },
+        {
+          "command": "thruster.compile",
+          "when": "resourceExtname == .ino && thruster.isInitialized",
+          "group": "navigation@1.1"
+        },
+        {
+          "command": "thruster.flash",
+          "when": "resourceExtname == .ino && thruster.isInitialized",
+          "group": "navigation@1.2"
+        },
+        {
+          "command": "thruster.flashAndMonitor",
+          "when": "resourceExtname == .ino && thruster.isInitialized",
+          "group": "navigation@1.3"
+        },
+        {
+          "command": "thruster.monitor",
+          "when": "resourceExtname == .ino && thruster.isInitialized",
+          "group": "navigation@1.4"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "Thruster",
+      "properties": {
+        "thruster.smartLibraryResolver": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "with warning",
+            "off"
+          ],
+          "default": "auto",
+          "description": "Smart Library Auto-Resolver: Automatically detects missing headers on compile failure, downloads the library from the Arduino registry via arduino-cli, and automatically recompiles."
+        },
+        "thruster.arduinoCliPath": {
+          "type": "string",
+          "default": "G:\\Arduino\\Arduino IDE\\resources\\app\\lib\\backend\\resources\\arduino-cli.exe",
+          "description": "Path to arduino-cli.exe"
+        },
+        "thruster.defaultBaudRate": {
+          "type": "number",
+          "default": 115200,
+          "description": "Default serial monitor baud rate"
+        }
+      }
+    }
+  }
+}
