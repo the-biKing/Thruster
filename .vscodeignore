@@ -1,0 +1,9 @@
+.vscode/**
+.github/**
+.git/**
+.gitignore
+Thruster_original.png
+find_menu.py
+install.ps1
+build_vsix.py
+*.vsix

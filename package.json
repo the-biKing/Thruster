@@ -3,7 +3,16 @@
   "displayName": "Thruster",
   "description": "One-click Compile, Flash, and Serial Monitor for NodeMCU ESP32 and Arduino sketches in Antigravity IDE.",
   "version": "0.1.0",
-  "publisher": "antigravity",
+  "publisher": "the-biKing",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/the-biKing/Thruster.git"
+  },
+  "bugs": {
+    "url": "https://github.com/the-biKing/Thruster/issues"
+  },
+  "homepage": "https://github.com/the-biKing/Thruster#readme",
   "icon": "Thruster.png",
   "engines": {
     "vscode": "^1.75.0"
