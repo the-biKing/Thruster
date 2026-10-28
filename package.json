@@ -1,7 +1,7 @@
 {
   "name": "thruster",
   "displayName": "Thruster",
-  "description": "One-click Compile, Flash, and Serial Monitor for NodeMCU ESP32 and Arduino sketches in Antigravity IDE.",
+  "description": "One-click compile, flash, and serial monitor for ESP32, Arduino, RP2040, and other microcontrollers with smart library auto-resolver in Antigravity IDE and VS Code.",
   "version": "0.1.1",
   "publisher": "the-biKing",
   "license": "MIT",
@@ -28,7 +28,10 @@
     "arduino",
     "flash",
     "serial",
-    "antigravity"
+    "antigravity",
+    "mcu",
+    "rp2040",
+    "uno"
   ],
   "main": "./extension.js",
   "activationEvents": [
@@ -44,7 +47,8 @@
     "onCommand:thruster.selectPort",
     "onCommand:thruster.selectBoard",
     "onCommand:thruster.installLibraries",
-    "onCommand:thruster.setupCli"
+    "onCommand:thruster.setupCli",
+    "onCommand:thruster.openSettings"
   ],
   "contributes": {
     "commands": [
@@ -101,6 +105,12 @@
         "title": "Thruster: Setup / Locate arduino-cli",
         "icon": "$(tools)",
         "enablement": "!thruster.isBusy"
+      },
+      {
+        "command": "thruster.openSettings",
+        "title": "Thruster: Open Settings & Readiness Checklist",
+        "icon": "$(gear)",
+        "enablement": "!thruster.isBusy"
       }
     ],
     "menus": {
@@ -129,6 +139,11 @@
           "command": "thruster.monitor",
           "when": "resourceExtname == .ino && thruster.isInitialized",
           "group": "navigation@1.4"
+        },
+        {
+          "command": "thruster.openSettings",
+          "when": "resourceExtname == .ino",
+          "group": "navigation@1.5"
         }
       ]
     },
@@ -149,7 +164,8 @@
         "thruster.arduinoCliPath": {
           "type": "string",
           "default": "",
-          "description": "Path to arduino-cli executable. Leave empty to automatically detect or auto-install."
+          "description": "Path to arduino-cli executable. Leave empty to automatically detect or auto-install.",
+          "markdownDescription": "Path to `arduino-cli` executable. Leave empty to automatically detect or auto-install. Ensure your system is ready in the [Thruster Settings & Checklist](command:thruster.openSettings)."
         },
         "thruster.defaultBaudRate": {
           "type": "number",

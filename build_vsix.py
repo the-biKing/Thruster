@@ -19,10 +19,23 @@ def build():
   <Metadata>
     <Identity Id="{name}" Version="{version}" Language="en-US" Publisher="{publisher}" />
     <DisplayName>{display_name}</DisplayName>
-    <Description>{description}</Description>
+    <Description xml:space="preserve">{description}</Description>
+    <Tags>{categories}</Tags>
     <Categories>{categories}</Categories>
     <Icon>extension/Thruster.png</Icon>
     <License>extension/LICENSE</License>
+    <Properties>
+      <Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.75.0" />
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionDependencies" Value="" />
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionPack" Value="" />
+      <Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="workspace,web" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://github.com/the-biKing/Thruster.git" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="https://github.com/the-biKing/Thruster.git" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.GitHub" Value="https://github.com/the-biKing/Thruster.git" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="https://github.com/the-biKing/Thruster/issues" />
+      <Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="https://github.com/the-biKing/Thruster#readme" />
+      <Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
+    </Properties>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Code" />
