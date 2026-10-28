@@ -27,6 +27,9 @@ for base in "${TARGET_DIRS[@]}"; do
         cp "$SOURCE_DIR/README.md" "$target/"
         cp "$SOURCE_DIR/Thruster.png" "$target/"
         cp "$SOURCE_DIR/LICENSE" "$target/"
+        if [ -d "$SOURCE_DIR/scripts" ]; then
+            cp -r "$SOURCE_DIR/scripts" "$target/"
+        fi
         echo " [COPIED] $target"
     fi
 done

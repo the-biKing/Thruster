@@ -54,6 +54,9 @@ foreach ($base in $baseExtDirs) {
             if ($CopyOnly) {
                 New-Item -ItemType Directory -Path $target -Force | Out-Null
                 Copy-Item -Path "$sourceDir\package.json", "$sourceDir\extension.js", "$sourceDir\README.md", "$sourceDir\Thruster.png", "$sourceDir\LICENSE" -Destination $target -Force
+                if (Test-Path "$sourceDir\scripts") {
+                    Copy-Item -Path "$sourceDir\scripts" -Destination $target -Recurse -Force
+                }
                 Write-Host " [COPIED] $target" -ForegroundColor Green
             } else {
                 try {
@@ -62,6 +65,9 @@ foreach ($base in $baseExtDirs) {
                 } catch {
                     New-Item -ItemType Directory -Path $target -Force | Out-Null
                     Copy-Item -Path "$sourceDir\package.json", "$sourceDir\extension.js", "$sourceDir\README.md", "$sourceDir\Thruster.png", "$sourceDir\LICENSE" -Destination $target -Force
+                    if (Test-Path "$sourceDir\scripts") {
+                        Copy-Item -Path "$sourceDir\scripts" -Destination $target -Recurse -Force
+                    }
                     Write-Host " [COPIED (Fallback)] $target" -ForegroundColor Yellow
                 }
             }
