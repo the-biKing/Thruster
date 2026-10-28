@@ -63,8 +63,15 @@ def build():
 '''
 
     output_filename = f"{name}-{version}.vsix"
-    
-    # Files to include in extension/
+
+    # Remove any old vsix files with different versions
+    import glob
+    for old_file in glob.glob(f"{name}-*.vsix"):
+        if old_file != output_filename:
+            try:
+                os.remove(old_file)
+            except OSError:
+                pass
     files_to_pack = [
         ('package.json', 'extension/package.json'),
         ('extension.js', 'extension/extension.js'),
