@@ -8,7 +8,7 @@ def build():
         pkg = json.load(f)
 
     name = pkg.get('name', 'thruster')
-    version = pkg.get('version', '0.1.0')
+    version = pkg.get('version', '0.2.0')
     publisher = pkg.get('publisher', 'the-biKing')
     display_name = pkg.get('displayName', name)
     description = pkg.get('description', '')

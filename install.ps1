@@ -12,7 +12,7 @@ param(
 )
 
 $sourceDir = $PSScriptRoot
-$extDirName = "the-biking.thruster-0.1.1-universal"
+$extDirName = "the-biking.thruster-0.2.0-universal"
 
 $baseExtDirs = @(
     "$env:USERPROFILE\.antigravity-ide\extensions",
@@ -21,7 +21,7 @@ $baseExtDirs = @(
 )
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " Installing Thruster Extension (v0.1.1)" -ForegroundColor Cyan
+Write-Host " Installing Thruster Extension (v0.2.0)" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
 foreach ($base in $baseExtDirs) {

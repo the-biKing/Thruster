@@ -10,7 +10,9 @@ One click to compile, flash, and open the interactive serial monitor — with au
 
 * 💻 **Cross-Platform Support:** Fully compatible with **macOS** (Apple Silicon M1/M2/M3/M4 & Intel), **Windows 10/11**, and **Linux**.
 * 🎯 **Broad Multi-MCU Support:** Works out of the box with ESP32, ESP8266, Arduino Uno/Nano/Mega/Due, Raspberry Pi Pico (RP2040 / RP2350), STM32, and any custom board.
-* 📋 **Extension Readiness Checklist:** Interactive settings page with live health checks ensuring your `arduino-cli` binary is ready to go.
+* ⚡ **Instant Flash (Smart Compile Skipping):** Automatically tracks code fingerprints across `.ino`, `.cpp`, and `.h` source files. If the code hasn't changed since the last build, the compile stage is skipped and firmware is uploaded directly to the board — drastically boosting flash efficiency.
+* ⚙️ **Unified Settings & Control Center:** All configuration (Smart Library Auto-Resolver, baud rate, target board, serial port, and toolchain checks) is unified in a single dashboard accessible via the top-right toolbar.
+* 📋 **Extension Readiness Checklist:** Live health checks ensuring your `arduino-cli` binary is ready to go.
 * ⚡ **One-Click `arduino-cli` Setup:** Automatic system detection or single-click automated download & installation of the official `arduino-cli` binary.
 * 🧠 **Smart Library Auto-Resolver:** Automatically catches missing `#include <Library.h>` headers during compilation, searches the official Arduino registry, installs missing libraries, and recompiles.
 * 🚀 **Editor Toolbar Controls:** Python-style run buttons in the top-right corner of any `.ino` sketch: **Compile**, **Flash (Upload)**, **Flash & Monitor**, and **Serial Monitor**.
@@ -37,17 +39,18 @@ Thruster features built-in presets and automatic toolchain downloads for popular
 
 ---
 
-## 📋 Settings Page & Readiness Checklist
+## ⚙️ Unified Settings & Readiness Checklist
 
-Thruster includes a dedicated **Control Center & Readiness Checklist** to guarantee your development environment is fully operational:
+Thruster consolidates all settings and diagnostics into a single **Control Center & Readiness Checklist** directly accessible from the top-right toolbar:
 
-1. Open the Command Palette (`Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS).
-2. Run **`Thruster: Open Settings & Readiness Checklist`** (or click the `$(gear)` icon in the editor title bar).
-3. The checklist validates your environment:
-   * **Step 1 — Valid `arduino-cli` binary:** Checks whether a working `arduino-cli` executable is located on system PATH, in standard IDE directories, or in `~/.thruster/bin/`.
-   * **⚡ One-Click Auto-Install:** If `arduino-cli` is missing, click this button to automatically download and configure the official standalone binary for your OS and architecture.
-   * **📂 Browse / Select Path:** Point Thruster to an existing binary already on your machine.
-   * **⚙️ Live Configuration:** Adjust the Smart Library Resolver mode, default baud rate (115200, 9600, etc.), and switch hardware targets directly from the page.
+1. Open any `.ino` sketch and click the **`Settings`** `$(gear)` icon in the top-right editor toolbar (or run **`Thruster: Open Settings & Readiness Checklist`** from `Ctrl+Shift+P` / `Cmd+Shift+P`).
+2. The unified control center provides:
+   * **📋 Step 1 — Valid `arduino-cli` binary:** Live status check showing whether `arduino-cli` is detected, its path, and its version.
+   * **⚡ One-Click Auto-Install:** Automatically downloads, extracts, and configures the official standalone binary for your OS and architecture.
+   * **📂 Custom Path Override:** Manually point to an existing binary or trigger a system-wide auto-scan.
+   * **🧠 Smart Library Auto-Resolver:** Configure resolver behavior (`Auto`, `With warning`, or `Off`) in one central location.
+   * **⚡ Serial Baud Rate:** Set default serial monitor speed (115200, 9600, etc.).
+   * **🎯 Target Hardware:** Switch target board and serial port on the fly.
 
 ---
 

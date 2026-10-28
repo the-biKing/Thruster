@@ -2,7 +2,7 @@
   "name": "thruster",
   "displayName": "Thruster",
   "description": "One-click compile, flash, and serial monitor for ESP32, Arduino, RP2040, and other microcontrollers with smart library auto-resolver in Antigravity IDE and VS Code.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "the-biKing",
   "license": "MIT",
   "repository": {
@@ -146,33 +146,6 @@
           "group": "navigation@1.5"
         }
       ]
-    },
-    "configuration": {
-      "type": "object",
-      "title": "Thruster",
-      "properties": {
-        "thruster.smartLibraryResolver": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "with warning",
-            "off"
-          ],
-          "default": "auto",
-          "description": "Smart Library Auto-Resolver: Automatically detects missing headers on compile failure, downloads the library from the Arduino registry via arduino-cli, and automatically recompiles."
-        },
-        "thruster.arduinoCliPath": {
-          "type": "string",
-          "default": "",
-          "description": "Path to arduino-cli executable. Leave empty to automatically detect or auto-install.",
-          "markdownDescription": "Path to `arduino-cli` executable. Leave empty to automatically detect or auto-install. Ensure your system is ready in the [Thruster Settings & Checklist](command:thruster.openSettings)."
-        },
-        "thruster.defaultBaudRate": {
-          "type": "number",
-          "default": 115200,
-          "description": "Default serial monitor baud rate"
-        }
-      }
     }
   }
 }

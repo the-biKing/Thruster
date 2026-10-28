@@ -4,7 +4,7 @@
 set -e
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXT_DIR_NAME="the-biking.thruster-0.1.1-universal"
+EXT_DIR_NAME="the-biking.thruster-0.2.0-universal"
 
 TARGET_DIRS=(
     "$HOME/.antigravity-ide/extensions"
@@ -13,7 +13,7 @@ TARGET_DIRS=(
 )
 
 echo "=========================================="
-echo " Installing Thruster Extension (v0.1.1)"
+echo " Installing Thruster Extension (v0.2.0)"
 echo "=========================================="
 
 for base in "${TARGET_DIRS[@]}"; do

@@ -5,6 +5,7 @@ const cp = require('child_process');
 const os = require('os');
 const https = require('https');
 const http = require('http');
+const crypto = require('crypto');
 
 let terminalInstance = null;
 let boardStatusBarItem = null;
@@ -733,6 +734,137 @@ async function promptSelectBoard(cliPath) {
     return { fqbn: selectedFqbn, boardName: selectedBoardName };
 }
 
+function getSmartLibraryResolverMode() {
+    const config = loadConfig();
+    if (config && config.smartLibraryResolver) {
+        return config.smartLibraryResolver;
+    }
+    return vscode.workspace.getConfiguration('thruster').get('smartLibraryResolver', 'auto');
+}
+
+function computeFileHash(filePath) {
+    try {
+        const content = fs.readFileSync(filePath);
+        return crypto.createHash('sha1').update(content).digest('hex');
+    } catch (e) {
+        return null;
+    }
+}
+
+function getSketchSourceFiles(sketchDir) {
+    const sourceExts = ['.ino', '.cpp', '.c', '.h', '.hpp', '.s'];
+    const files = [];
+
+    function scanDir(dir) {
+        try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    if (!entry.name.startsWith('.') && entry.name !== 'build') {
+                        scanDir(fullPath);
+                    }
+                } else if (entry.isFile()) {
+                    const ext = path.extname(entry.name).toLowerCase();
+                    if (sourceExts.includes(ext)) {
+                        files.push(fullPath);
+                    }
+                }
+            }
+        } catch (e) {}
+    }
+
+    scanDir(sketchDir);
+    return files;
+}
+
+function computeSketchFingerprint(sketchDir) {
+    const files = getSketchSourceFiles(sketchDir);
+    const hashes = {};
+    for (const f of files.sort()) {
+        const rel = path.relative(sketchDir, f);
+        try {
+            const stat = fs.statSync(f);
+            const sha1 = computeFileHash(f);
+            hashes[rel] = {
+                mtimeMs: stat.mtimeMs,
+                size: stat.size,
+                sha1: sha1
+            };
+        } catch (e) {}
+    }
+    return hashes;
+}
+
+function getBuildInfoPath(sketchDir) {
+    const root = getWorkspaceRoot() || sketchDir;
+    return path.join(root, '.vscode', '.thruster_build.json');
+}
+
+function isSketchAlreadyCompiled(sketchDir, fqbn) {
+    const buildInfoFile = getBuildInfoPath(sketchDir);
+    if (!fs.existsSync(buildInfoFile)) {
+        return false;
+    }
+
+    try {
+        const buildInfo = JSON.parse(fs.readFileSync(buildInfoFile, 'utf8'));
+        if (!buildInfo || buildInfo.fqbn !== fqbn || buildInfo.sketchDir !== sketchDir) {
+            return false;
+        }
+
+        const currentFingerprint = computeSketchFingerprint(sketchDir);
+        const recordedFingerprint = buildInfo.fingerprint || {};
+
+        const currentKeys = Object.keys(currentFingerprint).sort();
+        const recordedKeys = Object.keys(recordedFingerprint).sort();
+
+        if (currentKeys.length !== recordedKeys.length) {
+            return false;
+        }
+
+        for (let i = 0; i < currentKeys.length; i++) {
+            const key = currentKeys[i];
+            if (key !== recordedKeys[i]) return false;
+            if (currentFingerprint[key].sha1 !== recordedFingerprint[key].sha1) {
+                return false;
+            }
+        }
+
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+function recordSuccessfulCompile(sketchDir, fqbn) {
+    try {
+        const buildInfoFile = getBuildInfoPath(sketchDir);
+        const dir = path.dirname(buildInfoFile);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+
+        const fingerprint = computeSketchFingerprint(sketchDir);
+        const data = {
+            fqbn,
+            sketchDir,
+            timestamp: Date.now(),
+            fingerprint
+        };
+        fs.writeFileSync(buildInfoFile, JSON.stringify(data, null, 2), 'utf8');
+    } catch (e) {}
+}
+
+function invalidateCompileState(sketchDir) {
+    try {
+        const buildInfoFile = getBuildInfoPath(sketchDir);
+        if (fs.existsSync(buildInfoFile)) {
+            fs.unlinkSync(buildInfoFile);
+        }
+    } catch (e) {}
+}
+
 function findMissingHeader(text) {
     if (!text) return null;
     const match = text.match(/(?:fatal error|error):\s*<?([a-zA-Z0-9_\-\.]+)\.h>?:\s*/i);
@@ -783,7 +915,7 @@ function installLibraryAsync(libName, cliPath, term) {
 }
 
 async function compileWithSmartResolver(sketchDir, fqbn, cliPath, term) {
-    const resolverMode = vscode.workspace.getConfiguration('thruster').get('smartLibraryResolver', 'auto');
+    const resolverMode = getSmartLibraryResolverMode();
     const maxRetries = (resolverMode === 'off') ? 1 : 6;
     let attempt = 0;
     const installedInThisRun = new Set();
@@ -958,7 +1090,7 @@ function getSystemHealthState() {
     const config = loadConfig() || {};
     const vsConfig = vscode.workspace.getConfiguration('thruster');
     const configuredPath = vsConfig.get('arduinoCliPath') || (config && config.arduinoCliPath) || '';
-    const resolverMode = vsConfig.get('smartLibraryResolver', 'auto');
+    const resolverMode = getSmartLibraryResolverMode();
     const baudRate = (config && config.baudRate) || vsConfig.get('defaultBaudRate', 115200);
     const board = (config && config.board) || 'esp32:esp32:nodemcu-32s';
     const boardName = (config && config.boardName) || 'NodeMCU-32S (ESP32)';
@@ -1310,7 +1442,7 @@ function getSettingsWebviewHtml(state) {
                 </div>
             </div>
             <div class="badges">
-                <span class="badge">v0.1.1</span>
+                <span class="badge">v0.2.0</span>
                 <span class="badge">${osLabel}</span>
             </div>
         </div>
@@ -1587,8 +1719,12 @@ function openSettingsPanel(context) {
                 break;
             }
             case 'setResolver': {
-                await vscode.workspace.getConfiguration('thruster').update('smartLibraryResolver', msg.value, vscode.ConfigurationTarget.Global);
-                vscode.window.showInformationMessage(`Thruster: Smart Library Resolver set to "${msg.value}".`);
+                const val = msg.value || 'auto';
+                await vscode.workspace.getConfiguration('thruster').update('smartLibraryResolver', val, vscode.ConfigurationTarget.Global);
+                if (loadConfig()) {
+                    saveConfig({ smartLibraryResolver: val });
+                }
+                vscode.window.showInformationMessage(`Thruster: Smart Library Auto-Resolver set to "${val}".`);
                 if (settingsPanel) {
                     settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
                 }
@@ -1751,6 +1887,8 @@ function activate(context) {
             return;
         }
 
+        await vscode.workspace.saveAll(false);
+
         const cliPath = await ensureArduinoCli();
         if (!cliPath) return;
 
@@ -1768,19 +1906,24 @@ function activate(context) {
             setBusy(true);
             const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
             if (ok) {
+                recordSuccessfulCompile(sketchDir, fqbn);
                 vscode.window.showInformationMessage("Thruster: Compilation verified successfully!");
+            } else {
+                invalidateCompileState(sketchDir);
             }
         } finally {
             setBusy(false);
         }
     }));
 
-    // Flash Command (with Smart Library Resolver & Busy Lock)
+    // Flash Command (with Smart Compile Skipping & Busy Lock)
     context.subscriptions.push(vscode.commands.registerCommand('thruster.flash', async () => {
         if (isBusy) {
             vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
             return;
         }
+
+        await vscode.workspace.saveAll(false);
 
         const cliPath = await ensureArduinoCli();
         if (!cliPath) return;
@@ -1801,35 +1944,49 @@ function activate(context) {
         }
 
         const term = getTerminal();
+        term.show(true);
+
+        const isUpToDate = isSketchAlreadyCompiled(sketchDir, fqbn);
         const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
 
         try {
             setBusy(true);
-            const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-            if (ok) {
-                fs.writeFileSync(lockFile, 'busy', 'utf8');
-                sendTerminalEcho(term, `=== Thruster: Flashing (Uploading) to ${port}... ===`, 'cyan');
-                let uploadCmd;
-                if (isWin) {
-                    uploadCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }`;
-                } else {
-                    uploadCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; rm -f "${lockFile}"`;
+            if (isUpToDate) {
+                sendTerminalEcho(term, `=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
+                sendTerminalEcho(term, `=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
+            } else {
+                const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+                if (!ok) {
+                    invalidateCompileState(sketchDir);
+                    return;
                 }
-                term.sendText(uploadCmd);
-                await waitForLockRelease(lockFile);
+                recordSuccessfulCompile(sketchDir, fqbn);
             }
+
+            fs.writeFileSync(lockFile, 'busy', 'utf8');
+            sendTerminalEcho(term, `=== Thruster: Flashing (Uploading) to ${port}... ===`, 'cyan');
+            let uploadCmd;
+            if (isWin) {
+                uploadCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }`;
+            } else {
+                uploadCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; rm -f "${lockFile}"`;
+            }
+            term.sendText(uploadCmd);
+            await waitForLockRelease(lockFile);
         } finally {
             try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
             setBusy(false);
         }
     }));
 
-    // Flash & Monitor Command (with Smart Library Resolver & Busy Lock)
+    // Flash & Monitor Command (with Smart Compile Skipping & Busy Lock)
     context.subscriptions.push(vscode.commands.registerCommand('thruster.flashAndMonitor', async () => {
         if (isBusy) {
             vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
             return;
         }
+
+        await vscode.workspace.saveAll(false);
 
         const cliPath = await ensureArduinoCli();
         if (!cliPath) return;
@@ -1851,23 +2008,35 @@ function activate(context) {
         }
 
         const term = getTerminal();
+        term.show(true);
+
+        const isUpToDate = isSketchAlreadyCompiled(sketchDir, fqbn);
         const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
 
         try {
             setBusy(true);
-            const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-            if (ok) {
-                fs.writeFileSync(lockFile, 'busy', 'utf8');
-                sendTerminalEcho(term, `=== Thruster: Flashing (Uploading) to ${port}... ===`, 'cyan');
-                let flashAndMonitorCmd;
-                if (isWin) {
-                    flashAndMonitorCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }; if ($LASTEXITCODE -eq 0) { Write-Host "\`n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===" -ForegroundColor Green; & "${cliPath}" monitor -p "${port}" -c baudrate=${baud} }`;
-                } else {
-                    flashAndMonitorCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; EXIT_CODE=$?; rm -f "${lockFile}"; if [ $EXIT_CODE -eq 0 ]; then printf "\\033[1;32m\\n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===\\033[0m\\n"; "${cliPath}" monitor -p "${port}" -c baudrate=${baud}; fi`;
+            if (isUpToDate) {
+                sendTerminalEcho(term, `=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
+                sendTerminalEcho(term, `=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
+            } else {
+                const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+                if (!ok) {
+                    invalidateCompileState(sketchDir);
+                    return;
                 }
-                term.sendText(flashAndMonitorCmd);
-                await waitForLockRelease(lockFile);
+                recordSuccessfulCompile(sketchDir, fqbn);
             }
+
+            fs.writeFileSync(lockFile, 'busy', 'utf8');
+            sendTerminalEcho(term, `=== Thruster: Flashing (Uploading) to ${port}... ===`, 'cyan');
+            let flashAndMonitorCmd;
+            if (isWin) {
+                flashAndMonitorCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }; if ($LASTEXITCODE -eq 0) { Write-Host "\`n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===" -ForegroundColor Green; & "${cliPath}" monitor -p "${port}" -c baudrate=${baud} }`;
+            } else {
+                flashAndMonitorCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; EXIT_CODE=$?; rm -f "${lockFile}"; if [ $EXIT_CODE -eq 0 ]; then printf "\\033[1;32m\\n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===\\033[0m\\n"; "${cliPath}" monitor -p "${port}" -c baudrate=${baud}; fi`;
+            }
+            term.sendText(flashAndMonitorCmd);
+            await waitForLockRelease(lockFile);
         } finally {
             try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
             setBusy(false);
