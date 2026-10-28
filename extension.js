@@ -8,6 +8,7 @@ const http = require('http');
 const crypto = require('crypto');
 
 let terminalInstance = null;
+let isMonitoring = false;
 let boardStatusBarItem = null;
 let portStatusBarItem = null;
 let initStatusBarItem = null;
@@ -1040,6 +1041,24 @@ function setBusy(busy) {
     updateState();
 }
 
+async function stopSerialMonitor(verbose = false) {
+    if (!isMonitoring && !terminalInstance) return;
+
+    if (terminalInstance) {
+        try {
+            terminalInstance.sendText('\u0003', false);
+            await new Promise(r => setTimeout(r, 350));
+            terminalInstance.sendText('\u0003', false);
+            await new Promise(r => setTimeout(r, 200));
+            if (verbose) {
+                sendTerminalEcho(terminalInstance, `=== Thruster: Serial Monitor Stopped ===`, 'yellow');
+            }
+        } catch (e) { }
+    }
+    isMonitoring = false;
+    updateState();
+}
+
 function waitForLockRelease(lockPath, maxTimeoutMs = 180000) {
     return new Promise((resolve) => {
         const start = Date.now();
@@ -1057,6 +1076,7 @@ function updateState() {
     const isInit = !!(config && config.board);
     vscode.commands.executeCommand('setContext', 'thruster.isInitialized', isInit);
     vscode.commands.executeCommand('setContext', 'thruster.isBusy', isBusy);
+    vscode.commands.executeCommand('setContext', 'thruster.isMonitoring', isMonitoring);
 
     if (isInit) {
         if (initStatusBarItem) initStatusBarItem.hide();
@@ -1069,7 +1089,13 @@ function updateState() {
             boardStatusBarItem.show();
         }
         if (portStatusBarItem) {
-            portStatusBarItem.text = `$(plug) ${config.port || 'auto'}`;
+            if (isMonitoring) {
+                portStatusBarItem.text = `$(radio-tower) ${config.port || 'auto'} (Monitoring)`;
+                portStatusBarItem.tooltip = `Thruster: Serial Monitor active on ${config.port || 'auto'}. Click to select Serial port (will exit monitor).`;
+            } else {
+                portStatusBarItem.text = `$(plug) ${config.port || 'auto'}`;
+                portStatusBarItem.tooltip = 'Thruster: Click to select Serial port';
+            }
             portStatusBarItem.show();
         }
     } else {
@@ -1741,6 +1767,7 @@ function openSettingsPanel(context) {
                 break;
             }
             case 'selectBoard': {
+                if (isMonitoring) await stopSerialMonitor();
                 const cli = await ensureArduinoCli(false);
                 if (!cli) {
                     vscode.window.showErrorMessage("Please install or locate arduino-cli first.");
@@ -1802,6 +1829,15 @@ function activate(context) {
     watcher.onDidDelete(() => updateState());
     context.subscriptions.push(watcher);
 
+    // Watch terminal closure to reset monitor state
+    vscode.window.onDidCloseTerminal((t) => {
+        if (t === terminalInstance) {
+            terminalInstance = null;
+            isMonitoring = false;
+            updateState();
+        }
+    }, null, context.subscriptions);
+
     updateState();
 
     // 2. Register Commands
@@ -1813,6 +1849,10 @@ function activate(context) {
         if (isBusy) {
             vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
             return;
+        }
+
+        if (isMonitoring) {
+            await stopSerialMonitor();
         }
 
         const root = getWorkspaceRoot();
@@ -1887,6 +1927,10 @@ function activate(context) {
             return;
         }
 
+        if (isMonitoring) {
+            await stopSerialMonitor();
+        }
+
         await vscode.workspace.saveAll(false);
 
         const cliPath = await ensureArduinoCli();
@@ -1921,6 +1965,10 @@ function activate(context) {
         if (isBusy) {
             vscode.window.showWarningMessage("Thruster: A compile or flash task is already in progress.");
             return;
+        }
+
+        if (isMonitoring) {
+            await stopSerialMonitor();
         }
 
         await vscode.workspace.saveAll(false);
@@ -1986,6 +2034,10 @@ function activate(context) {
             return;
         }
 
+        if (isMonitoring) {
+            await stopSerialMonitor();
+        }
+
         await vscode.workspace.saveAll(false);
 
         const cliPath = await ensureArduinoCli();
@@ -2012,6 +2064,7 @@ function activate(context) {
 
         const isUpToDate = isSketchAlreadyCompiled(sketchDir, fqbn);
         const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
+        const statusFile = path.join(os.tmpdir(), `thruster_status_${Date.now()}.txt`);
 
         try {
             setBusy(true);
@@ -2031,14 +2084,29 @@ function activate(context) {
             sendTerminalEcho(term, `=== Thruster: Flashing (Uploading) to ${port}... ===`, 'cyan');
             let flashAndMonitorCmd;
             if (isWin) {
-                flashAndMonitorCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }; if ($LASTEXITCODE -eq 0) { Write-Host "\`n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===" -ForegroundColor Green; & "${cliPath}" monitor -p "${port}" -c baudrate=${baud} }`;
+                flashAndMonitorCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; $ec = $LASTEXITCODE } catch { $ec = 1 } finally { Set-Content -Path "${statusFile}" -Value $ec -Force; Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }; if ($ec -eq 0) { Write-Host "\`n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===" -ForegroundColor Green; & "${cliPath}" monitor -p "${port}" -c baudrate=${baud} }`;
             } else {
-                flashAndMonitorCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; EXIT_CODE=$?; rm -f "${lockFile}"; if [ $EXIT_CODE -eq 0 ]; then printf "\\033[1;32m\\n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===\\033[0m\\n"; "${cliPath}" monitor -p "${port}" -c baudrate=${baud}; fi`;
+                flashAndMonitorCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; EC=$?; printf "%s" "$EC" > "${statusFile}"; rm -f "${lockFile}"; if [ $EC -eq 0 ]; then printf "\\033[1;32m\\n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===\\033[0m\\n"; "${cliPath}" monitor -p "${port}" -c baudrate=${baud}; fi`;
             }
             term.sendText(flashAndMonitorCmd);
             await waitForLockRelease(lockFile);
+
+            let uploadSuccess = false;
+            try {
+                if (fs.existsSync(statusFile)) {
+                    const statusVal = fs.readFileSync(statusFile, 'utf8').trim();
+                    uploadSuccess = (statusVal === '0');
+                    fs.unlinkSync(statusFile);
+                }
+            } catch (e) { }
+
+            if (uploadSuccess) {
+                isMonitoring = true;
+                updateState();
+            }
         } finally {
             try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
+            try { if (fs.existsSync(statusFile)) fs.unlinkSync(statusFile); } catch (e) { }
             setBusy(false);
         }
     }));
@@ -2047,6 +2115,16 @@ function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand('thruster.monitor', async () => {
         if (isBusy) {
             vscode.window.showWarningMessage("Thruster: Cannot open Serial Monitor while compile or flash is in progress.");
+            return;
+        }
+
+        if (isMonitoring) {
+            await stopSerialMonitor();
+            vscode.window.showInformationMessage("Thruster: Exited Serial Monitor.", "Restart Monitor").then(choice => {
+                if (choice === "Restart Monitor") {
+                    vscode.commands.executeCommand('thruster.monitor');
+                }
+            });
             return;
         }
 
@@ -2064,7 +2142,20 @@ function activate(context) {
 
         const term = getTerminal();
         term.show(true);
+        sendTerminalEcho(term, `=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===`, 'green');
         term.sendText(formatCliCmd(cliPath, `monitor -p "${port}" -c baudrate=${baud}`));
+        isMonitoring = true;
+        updateState();
+    }));
+
+    // Stop Monitor Command
+    context.subscriptions.push(vscode.commands.registerCommand('thruster.stopMonitor', async () => {
+        if (isMonitoring) {
+            await stopSerialMonitor(true);
+            vscode.window.showInformationMessage("Thruster: Serial Monitor stopped.");
+        } else {
+            vscode.window.showInformationMessage("Thruster: Serial Monitor is not running.");
+        }
     }));
 
     // Select Port Command
@@ -2072,6 +2163,10 @@ function activate(context) {
         if (isBusy) {
             vscode.window.showWarningMessage("Thruster: Cannot change port while compile or flash is in progress.");
             return;
+        }
+
+        if (isMonitoring) {
+            await stopSerialMonitor();
         }
 
         const cliPath = await ensureArduinoCli();
@@ -2115,6 +2210,10 @@ function activate(context) {
             return;
         }
 
+        if (isMonitoring) {
+            await stopSerialMonitor();
+        }
+
         const cliPath = await ensureArduinoCli();
         if (!cliPath) return;
 
@@ -2136,6 +2235,10 @@ function activate(context) {
             return;
         }
 
+        if (isMonitoring) {
+            await stopSerialMonitor();
+        }
+
         const cliPath = await ensureArduinoCli();
         if (!cliPath) return;
 
@@ -2150,6 +2253,10 @@ function activate(context) {
 
     // Setup / Locate arduino-cli Command
     context.subscriptions.push(vscode.commands.registerCommand('thruster.setupCli', async () => {
+        if (isMonitoring) {
+            await stopSerialMonitor();
+        }
+
         const current = resolveArduinoCliPath();
         const statusMsg = current ? `Current: ${current}` : "Currently NOT found";
 
@@ -2204,6 +2311,11 @@ function activate(context) {
 }
 
 function deactivate() {
+    if (isMonitoring && terminalInstance) {
+        try {
+            terminalInstance.sendText('\u0003', false);
+        } catch (e) { }
+    }
     if (terminalInstance) {
         terminalInstance.dispose();
     }

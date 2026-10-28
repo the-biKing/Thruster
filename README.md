@@ -11,6 +11,7 @@ One click to compile, flash, and open the interactive serial monitor — with au
 * 💻 **Cross-Platform Support:** Fully compatible with **macOS** (Apple Silicon M1/M2/M3/M4 & Intel), **Windows 10/11**, and **Linux**.
 * 🎯 **Broad Multi-MCU Support:** Works out of the box with ESP32, ESP8266, Arduino Uno/Nano/Mega/Due, Raspberry Pi Pico (RP2040 / RP2350), STM32, and any custom board.
 * ⚡ **Instant Flash (Smart Compile Skipping):** Automatically tracks code fingerprints across `.ino`, `.cpp`, and `.h` source files. If the code hasn't changed since the last build, the compile stage is skipped and firmware is uploaded directly to the board — drastically boosting flash efficiency.
+* 🔄 **Smart Serial Monitor Management:** Whenever you click **Compile**, **Flash**, or switch settings while the Serial Monitor is active, Thruster automatically and cleanly exits the serial monitor, frees the serial port, and executes your command without typing command strings into the serial stream.
 * ⚙️ **Unified Settings & Control Center:** All configuration (Smart Library Auto-Resolver, baud rate, target board, serial port, and toolchain checks) is unified in a single dashboard accessible via the top-right toolbar.
 * 📋 **Extension Readiness Checklist:** Live health checks ensuring your `arduino-cli` binary is ready to go.
 * ⚡ **One-Click `arduino-cli` Setup:** Automatic system detection or single-click automated download & installation of the official `arduino-cli` binary.
@@ -67,7 +68,7 @@ When opening any `.ino` sketch:
   * ⚡ **`Flash (Upload)`** `$(zap)`: One-click compile & upload to the connected board.
   * 🚀 **`Flash & Monitor`** `$(run-all)`: Compiles, flashes, and immediately launches the interactive Serial Monitor in the terminal.
   * ✔️ **`Compile / Verify`** `$(check)`: Fast verification and compilation without uploading.
-  * 📡 **`Serial Monitor`** `$(radio-tower)`: Connects to the board's serial console (press `Ctrl + C` anytime to detach).
+  * 📡 **`Serial Monitor`** `$(radio-tower)` / ⏹️ **`Stop Serial Monitor`** `$(debug-stop)`: Connects to the board's serial console. While monitoring, the button dynamically changes to **Stop Serial Monitor** for effortless 1-click detachment.
   * ⚙️ **`Settings`** `$(gear)`: Opens the Thruster Settings & Readiness Checklist.
 
 ### 2. Status Bar Controls (Bottom-Left)

@@ -48,7 +48,8 @@
     "onCommand:thruster.selectBoard",
     "onCommand:thruster.installLibraries",
     "onCommand:thruster.setupCli",
-    "onCommand:thruster.openSettings"
+    "onCommand:thruster.openSettings",
+    "onCommand:thruster.stopMonitor"
   ],
   "contributes": {
     "commands": [
@@ -80,6 +81,12 @@
         "command": "thruster.monitor",
         "title": "Thruster: Serial Monitor",
         "icon": "$(radio-tower)",
+        "enablement": "!thruster.isBusy"
+      },
+      {
+        "command": "thruster.stopMonitor",
+        "title": "Thruster: Stop Serial Monitor",
+        "icon": "$(debug-stop)",
         "enablement": "!thruster.isBusy"
       },
       {
@@ -137,7 +144,12 @@
         },
         {
           "command": "thruster.monitor",
-          "when": "resourceExtname == .ino && thruster.isInitialized",
+          "when": "resourceExtname == .ino && thruster.isInitialized && !thruster.isMonitoring",
+          "group": "navigation@1.4"
+        },
+        {
+          "command": "thruster.stopMonitor",
+          "when": "resourceExtname == .ino && thruster.isInitialized && thruster.isMonitoring",
           "group": "navigation@1.4"
         },
         {
