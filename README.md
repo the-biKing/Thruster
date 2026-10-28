@@ -65,6 +65,18 @@ If you ever move folders or want to relink:
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
+### 3. Automatic `arduino-cli` Detection & One-Click Setup
+Thruster automatically detects `arduino-cli` on your system across:
+* System `PATH`
+* Official Arduino IDE 2.x standard installation folders
+* User local directories (`~/.thruster/bin/arduino-cli`)
+
+If `arduino-cli` is not found, Thruster presents an interactive prompt with:
+* ⚡ **One-Click Auto-Install:** Automatically downloads, extracts, and configures the latest official standalone `arduino-cli` binary into `~/.thruster/bin/` with zero manual configuration.
+* 📂 **Browse / Point to Path:** Choose any custom `arduino-cli` executable on your system.
+
+You can also run **`Thruster: Setup / Locate arduino-cli`** from the Command Palette (`Ctrl + Shift + P`) at any time.
+
 ---
 
 ## ⚙️ Configuration File (`.vscode/arduino.json`)
@@ -77,9 +89,10 @@ When initialized in a project, Thruster creates `.vscode/arduino.json`:
   "boardName": "NodeMCU-32S (ESP32)",
   "port": "auto",
   "baudRate": 115200,
-  "arduinoCliPath": "G:\\Arduino\\Arduino IDE\\resources\\app\\lib\\backend\\resources\\arduino-cli.exe"
+  "arduinoCliPath": ""
 }
 ```
 
+* `"arduinoCliPath"`: Optional path override. Leave empty `""` to use auto-detection or the one-click installed binary.
 * `"port": "auto"`: Dynamically finds the USB serial port on each flash.
 * You can also specify an exact port like `"COM3"`.

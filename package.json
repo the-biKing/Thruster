@@ -2,7 +2,7 @@
   "name": "thruster",
   "displayName": "Thruster",
   "description": "One-click Compile, Flash, and Serial Monitor for NodeMCU ESP32 and Arduino sketches in Antigravity IDE.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "the-biKing",
   "license": "MIT",
   "repository": {
@@ -43,7 +43,8 @@
     "onCommand:thruster.monitor",
     "onCommand:thruster.selectPort",
     "onCommand:thruster.selectBoard",
-    "onCommand:thruster.installLibraries"
+    "onCommand:thruster.installLibraries",
+    "onCommand:thruster.setupCli"
   ],
   "contributes": {
     "commands": [
@@ -94,6 +95,12 @@
         "title": "Thruster: Scan & Install Missing Libraries",
         "icon": "$(cloud-download)",
         "enablement": "!thruster.isBusy"
+      },
+      {
+        "command": "thruster.setupCli",
+        "title": "Thruster: Setup / Locate arduino-cli",
+        "icon": "$(tools)",
+        "enablement": "!thruster.isBusy"
       }
     ],
     "menus": {
@@ -141,8 +148,8 @@
         },
         "thruster.arduinoCliPath": {
           "type": "string",
-          "default": "G:\\Arduino\\Arduino IDE\\resources\\app\\lib\\backend\\resources\\arduino-cli.exe",
-          "description": "Path to arduino-cli.exe"
+          "default": "",
+          "description": "Path to arduino-cli executable. Leave empty to automatically detect or auto-install."
         },
         "thruster.defaultBaudRate": {
           "type": "number",

@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const cp = require('child_process');
 const os = require('os');
+const https = require('https');
+const http = require('http');
 
 let terminalInstance = null;
 let boardStatusBarItem = null;
@@ -53,22 +55,6 @@ function getConfigPath() {
     return path.join(root, '.vscode', 'arduino.json');
 }
 
-function getCliPath() {
-    const config = loadConfig();
-    if (config && config.arduinoCliPath && fs.existsSync(config.arduinoCliPath)) {
-        return config.arduinoCliPath;
-    }
-    const vsSettings = vscode.workspace.getConfiguration('thruster');
-    const settingsPath = vsSettings.get('arduinoCliPath');
-    if (settingsPath && fs.existsSync(settingsPath)) {
-        return settingsPath;
-    }
-    if (fs.existsSync(DEFAULT_CLI_PATH)) {
-        return DEFAULT_CLI_PATH;
-    }
-    return "arduino-cli";
-}
-
 function loadConfig() {
     const p = getConfigPath();
     if (p && fs.existsSync(p)) {
@@ -92,6 +78,295 @@ function saveConfig(data) {
     const merged = Object.assign({}, current, data);
     fs.writeFileSync(getConfigPath(), JSON.stringify(merged, null, 2), 'utf8');
     return true;
+}
+
+function checkBinaryRunnable(binaryPath) {
+    if (!binaryPath) return false;
+    try {
+        const cmd = binaryPath === 'arduino-cli' ? 'arduino-cli version' : `"${binaryPath}" version`;
+        const out = cp.execSync(cmd, { encoding: 'utf8', timeout: 6000, stdio: ['ignore', 'pipe', 'ignore'] });
+        return typeof out === 'string' && out.toLowerCase().includes('arduino-cli');
+    } catch (e) {
+        return false;
+    }
+}
+
+function resolveArduinoCliPath() {
+    // 1. Check workspace config (.vscode/arduino.json)
+    const config = loadConfig();
+    if (config && config.arduinoCliPath) {
+        const trimmed = String(config.arduinoCliPath).trim();
+        if (trimmed && fs.existsSync(trimmed) && checkBinaryRunnable(trimmed)) {
+            return trimmed;
+        }
+    }
+
+    // 2. Check VS Code settings (thruster.arduinoCliPath)
+    const vsSettings = vscode.workspace.getConfiguration('thruster');
+    const settingsPath = vsSettings.get('arduinoCliPath');
+    if (settingsPath && typeof settingsPath === 'string' && settingsPath.trim()) {
+        const trimmed = settingsPath.trim();
+        if (fs.existsSync(trimmed) && checkBinaryRunnable(trimmed)) {
+            return trimmed;
+        }
+    }
+
+    // 3. Check system PATH
+    if (checkBinaryRunnable('arduino-cli')) {
+        return 'arduino-cli';
+    }
+
+    // 4. Candidate locations
+    const isWin = process.platform === 'win32';
+    const isMac = process.platform === 'darwin';
+    const binName = isWin ? 'arduino-cli.exe' : 'arduino-cli';
+    const home = os.homedir();
+
+    const candidates = [
+        path.join(home, '.thruster', 'bin', binName)
+    ];
+
+    if (isWin) {
+        const localApp = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+        const progFiles = process.env.ProgramFiles || 'C:\\Program Files';
+        const progFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+
+        candidates.push(
+            path.join(localApp, 'Programs', 'Arduino IDE', 'resources', 'app', 'lib', 'backend', 'resources', 'arduino-cli.exe'),
+            path.join(progFiles, 'Arduino IDE', 'resources', 'app', 'lib', 'backend', 'resources', 'arduino-cli.exe'),
+            path.join(progFilesX86, 'Arduino IDE', 'resources', 'app', 'lib', 'backend', 'resources', 'arduino-cli.exe'),
+            path.join(localApp, 'Arduino15', 'bin', 'arduino-cli.exe'),
+            path.join(localApp, 'Arduino15', 'arduino-cli.exe'),
+            path.join(home, 'bin', 'arduino-cli.exe'),
+            path.join(home, 'arduino-cli', 'arduino-cli.exe'),
+            DEFAULT_CLI_PATH
+        );
+    } else if (isMac) {
+        candidates.push(
+            '/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli',
+            '/usr/local/bin/arduino-cli',
+            '/opt/homebrew/bin/arduino-cli',
+            path.join(home, 'bin', 'arduino-cli'),
+            path.join(home, 'Library', 'Arduino15', 'bin', 'arduino-cli')
+        );
+    } else {
+        candidates.push(
+            '/usr/local/bin/arduino-cli',
+            '/usr/bin/arduino-cli',
+            path.join(home, '.local', 'bin', 'arduino-cli'),
+            path.join(home, 'bin', 'arduino-cli'),
+            path.join(home, '.arduino15', 'bin', 'arduino-cli')
+        );
+    }
+
+    for (const c of candidates) {
+        if (c && fs.existsSync(c) && checkBinaryRunnable(c)) {
+            return c;
+        }
+    }
+
+    return null;
+}
+
+function getCliPath() {
+    return resolveArduinoCliPath() || 'arduino-cli';
+}
+
+function downloadFile(url, destPath, onProgress) {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(destPath);
+        const request = (targetUrl) => {
+            const client = targetUrl.startsWith('https') ? https : http;
+            client.get(targetUrl, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    res.resume();
+                    return request(res.headers.location);
+                }
+                if (res.statusCode !== 200) {
+                    file.close();
+                    fs.unlink(destPath, () => {});
+                    return reject(new Error(`Download failed with HTTP ${res.statusCode}`));
+                }
+
+                const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+                let receivedBytes = 0;
+
+                res.on('data', (chunk) => {
+                    receivedBytes += chunk.length;
+                    if (onProgress && totalBytes > 0) {
+                        onProgress(receivedBytes, totalBytes);
+                    }
+                });
+
+                res.pipe(file);
+                file.on('finish', () => {
+                    file.close(() => resolve(destPath));
+                });
+            }).on('error', (err) => {
+                file.close();
+                fs.unlink(destPath, () => {});
+                reject(err);
+            });
+        };
+        request(url);
+    });
+}
+
+function extractArchive(archivePath, targetDir) {
+    if (process.platform === 'win32') {
+        const psCmd = `Expand-Archive -Path '${archivePath}' -DestinationPath '${targetDir}' -Force`;
+        cp.execSync(`powershell -NoProfile -NonInteractive -Command "${psCmd}"`, { encoding: 'utf8', timeout: 120000 });
+    } else {
+        cp.execSync(`tar -xzf "${archivePath}" -C "${targetDir}"`, { encoding: 'utf8', timeout: 120000 });
+    }
+}
+
+async function installArduinoCliOneClick() {
+    return vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: "Thruster: Installing official arduino-cli...",
+        cancellable: false
+    }, async (progress) => {
+        try {
+            const installDir = path.join(os.homedir(), '.thruster', 'bin');
+            if (!fs.existsSync(installDir)) {
+                fs.mkdirSync(installDir, { recursive: true });
+            }
+
+            const isWin = process.platform === 'win32';
+            const isMac = process.platform === 'darwin';
+            const isArm = process.arch === 'arm64';
+            const binName = isWin ? 'arduino-cli.exe' : 'arduino-cli';
+            const targetExe = path.join(installDir, binName);
+
+            let downloadUrl = '';
+            let archiveExt = '.zip';
+
+            if (isWin) {
+                downloadUrl = process.arch === 'ia32'
+                    ? 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Windows_32bit.zip'
+                    : 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Windows_64bit.zip';
+                archiveExt = '.zip';
+            } else if (isMac) {
+                downloadUrl = isArm
+                    ? 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_macOS_ARM64.tar.gz'
+                    : 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_macOS_64bit.tar.gz';
+                archiveExt = '.tar.gz';
+            } else {
+                downloadUrl = isArm
+                    ? 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_ARM64.tar.gz'
+                    : 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Linux_64bit.tar.gz';
+                archiveExt = '.tar.gz';
+            }
+
+            const tempArchive = path.join(os.tmpdir(), `thruster_arduino_cli_${Date.now()}${archiveExt}`);
+
+            progress.report({ message: "Connecting to Arduino download servers..." });
+            const term = getTerminal();
+            term.show(true);
+            term.sendText(`Write-Host "=== Thruster: Downloading official arduino-cli from ${downloadUrl}... ===" -ForegroundColor Cyan`);
+
+            await downloadFile(downloadUrl, tempArchive, (received, total) => {
+                if (total > 0) {
+                    const percent = Math.round((received / total) * 100);
+                    const mbReceived = (received / (1024 * 1024)).toFixed(1);
+                    const mbTotal = (total / (1024 * 1024)).toFixed(1);
+                    progress.report({ message: `Downloading arduino-cli: ${percent}% (${mbReceived} MB / ${mbTotal} MB)...` });
+                }
+            });
+
+            progress.report({ message: "Extracting arduino-cli binary..." });
+            term.sendText(`Write-Host "=== Thruster: Extracting to ${installDir}... ===" -ForegroundColor Cyan`);
+            extractArchive(tempArchive, installDir);
+            try { fs.unlinkSync(tempArchive); } catch (e) {}
+
+            if (!isWin) {
+                try { fs.chmodSync(targetExe, 0o755); } catch (e) {}
+            }
+
+            progress.report({ message: "Verifying binary installation..." });
+            if (!checkBinaryRunnable(targetExe)) {
+                throw new Error(`Downloaded binary at "${targetExe}" could not be executed.`);
+            }
+
+            // Update configuration
+            await vscode.workspace.getConfiguration('thruster').update('arduinoCliPath', targetExe, vscode.ConfigurationTarget.Global);
+            if (loadConfig()) {
+                saveConfig({ arduinoCliPath: targetExe });
+            }
+
+            progress.report({ message: "Updating Arduino package index..." });
+            term.sendText(`Write-Host "=== Thruster: Updating package index via arduino-cli... ===" -ForegroundColor Cyan`);
+            try {
+                cp.execSync(`"${targetExe}" core update-index`, { encoding: 'utf8', timeout: 35000 });
+            } catch (e) {}
+
+            term.sendText(`Write-Host "=== Thruster: arduino-cli setup successfully completed! ===" -ForegroundColor Green`);
+            vscode.window.showInformationMessage(`Thruster: arduino-cli successfully installed to ${targetExe}`);
+
+            return targetExe;
+        } catch (err) {
+            vscode.window.showErrorMessage(`Thruster: Failed to auto-install arduino-cli: ${err.message}. You can manually download it or point to an existing path.`);
+            return null;
+        }
+    });
+}
+
+async function promptLocateArduinoCli() {
+    const isWin = process.platform === 'win32';
+    const uris = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        openLabel: "Select arduino-cli executable",
+        title: "Locate arduino-cli Executable",
+        filters: isWin ? { 'Executables (*.exe)': ['exe'], 'All Files (*.*)': ['*'] } : undefined
+    });
+
+    if (!uris || uris.length === 0) {
+        return null;
+    }
+
+    const selected = uris[0].fsPath;
+    if (!checkBinaryRunnable(selected)) {
+        vscode.window.showErrorMessage(`Thruster: Selected file is not a working arduino-cli executable: "${selected}"`);
+        return null;
+    }
+
+    await vscode.workspace.getConfiguration('thruster').update('arduinoCliPath', selected, vscode.ConfigurationTarget.Global);
+    if (loadConfig()) {
+        saveConfig({ arduinoCliPath: selected });
+    }
+
+    vscode.window.showInformationMessage(`Thruster: arduino-cli path configured to "${selected}"`);
+    return selected;
+}
+
+async function ensureArduinoCli(promptIfMissing = true) {
+    const existing = resolveArduinoCliPath();
+    if (existing) {
+        return existing;
+    }
+
+    if (!promptIfMissing) {
+        return null;
+    }
+
+    const choice = await vscode.window.showErrorMessage(
+        "Thruster: 'arduino-cli' was not found on your system. It is required to compile, upload, and monitor sketches.",
+        { modal: true },
+        "⚡ One-Click Auto-Install",
+        "📂 Browse / Point to Path...",
+        "Cancel"
+    );
+
+    if (choice === "⚡ One-Click Auto-Install") {
+        return await installArduinoCliOneClick();
+    } else if (choice === "📂 Browse / Point to Path...") {
+        return await promptLocateArduinoCli();
+    }
+
+    return null;
 }
 
 function scanSerialPorts(cliPath) {
@@ -563,7 +838,8 @@ function activate(context) {
             return;
         }
 
-        const cliPath = getCliPath();
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
 
         // Step 1: Select Board (with core auto-installation)
         const boardInfo = await promptSelectBoard(cliPath);
@@ -624,6 +900,9 @@ function activate(context) {
             return;
         }
 
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found to compile. Please open an .ino file.");
@@ -632,7 +911,6 @@ function activate(context) {
 
         const config = loadConfig();
         const fqbn = (config && config.board) || "esp32:esp32:nodemcu-32s";
-        const cliPath = getCliPath();
         const term = getTerminal();
 
         try {
@@ -653,6 +931,9 @@ function activate(context) {
             return;
         }
 
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found to flash. Please open an .ino file.");
@@ -661,7 +942,6 @@ function activate(context) {
 
         const config = loadConfig();
         const fqbn = (config && config.board) || "esp32:esp32:nodemcu-32s";
-        const cliPath = getCliPath();
 
         const port = await getOrResolvePort(config, cliPath);
         if (!port) {
@@ -695,6 +975,9 @@ function activate(context) {
             return;
         }
 
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found to flash. Please open an .ino file.");
@@ -704,7 +987,6 @@ function activate(context) {
         const config = loadConfig();
         const fqbn = (config && config.board) || "esp32:esp32:nodemcu-32s";
         const baud = (config && config.baudRate) || 115200;
-        const cliPath = getCliPath();
 
         const port = await getOrResolvePort(config, cliPath);
         if (!port) {
@@ -738,9 +1020,11 @@ function activate(context) {
             return;
         }
 
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
+
         const config = loadConfig();
         const baud = (config && config.baudRate) || 115200;
-        const cliPath = getCliPath();
 
         const port = await getOrResolvePort(config, cliPath);
         if (!port) {
@@ -761,7 +1045,9 @@ function activate(context) {
             return;
         }
 
-        const cliPath = getCliPath();
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
+
         const detected = await scanSerialPorts(cliPath);
         const items = [
             { label: "Auto-detect USB Port (Recommended)", port: "auto", description: "Dynamically select USB COM port" }
@@ -791,7 +1077,9 @@ function activate(context) {
             return;
         }
 
-        const cliPath = getCliPath();
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
+
         const boardInfo = await promptSelectBoard(cliPath);
         if (!boardInfo) return;
 
@@ -807,14 +1095,67 @@ function activate(context) {
             return;
         }
 
+        const cliPath = await ensureArduinoCli();
+        if (!cliPath) return;
+
         const sketchDir = getActiveSketchDir();
         if (!sketchDir) {
             vscode.window.showErrorMessage("No .ino sketch found. Please open an .ino file.");
             return;
         }
-        const cliPath = getCliPath();
         const term = getTerminal();
         await scanAndInstallSketchLibraries(sketchDir, cliPath, term);
+    }));
+
+    // Setup / Locate arduino-cli Command
+    context.subscriptions.push(vscode.commands.registerCommand('thruster.setupCli', async () => {
+        const current = resolveArduinoCliPath();
+        const statusMsg = current ? `Current: ${current}` : "Currently NOT found";
+
+        const choices = [
+            { label: "⚡ One-Click Auto-Install arduino-cli", description: "Download and install official standalone arduino-cli binary", action: "install" },
+            { label: "📂 Browse / Point to Path...", description: "Select an existing arduino-cli executable on your machine", action: "browse" },
+            { label: "🔍 Auto-Detect on System", description: `Re-scan system PATH and standard directories (${statusMsg})`, action: "detect" }
+        ];
+
+        if (current) {
+            choices.push({ label: "ℹ️ Check Version & Status", description: "Test current arduino-cli", action: "version" });
+        }
+
+        const pick = await vscode.window.showQuickPick(choices, {
+            placeHolder: `Thruster: Configure arduino-cli (${statusMsg})`
+        });
+        if (!pick) return;
+
+        if (pick.action === "install") {
+            await installArduinoCliOneClick();
+        } else if (pick.action === "browse") {
+            await promptLocateArduinoCli();
+        } else if (pick.action === "detect") {
+            const detected = resolveArduinoCliPath();
+            if (detected) {
+                await vscode.workspace.getConfiguration('thruster').update('arduinoCliPath', detected, vscode.ConfigurationTarget.Global);
+                if (loadConfig()) {
+                    saveConfig({ arduinoCliPath: detected });
+                }
+                vscode.window.showInformationMessage(`Thruster: Found and configured arduino-cli at: ${detected}`);
+            } else {
+                const installNow = await vscode.window.showWarningMessage(
+                    "Thruster: arduino-cli was not found in any standard location. Would you like to auto-install it now?",
+                    "⚡ Auto-Install", "Cancel"
+                );
+                if (installNow === "⚡ Auto-Install") {
+                    await installArduinoCliOneClick();
+                }
+            }
+        } else if (pick.action === "version") {
+            try {
+                const ver = cp.execSync(current === 'arduino-cli' ? 'arduino-cli version' : `"${current}" version`, { encoding: 'utf8' }).trim();
+                vscode.window.showInformationMessage(`Thruster arduino-cli: ${ver}`);
+            } catch (e) {
+                vscode.window.showErrorMessage(`Thruster: Error running arduino-cli: ${e.message}`);
+            }
+        }
     }));
 }
 

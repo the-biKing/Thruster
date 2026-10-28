@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Installs / Links Thruster into Antigravity IDE and VS Code extension directories.
 .DESCRIPTION
@@ -12,38 +12,58 @@ param(
 )
 
 $sourceDir = $PSScriptRoot
-$extDirName = "antigravity.thruster-0.1.0"
+$extDirName = "the-biking.thruster-0.1.1-universal"
 
-$targetPaths = @(
-    "$env:USERPROFILE\.antigravity-ide\extensions\$extDirName",
-    "$env:USERPROFILE\.antigravity\extensions\$extDirName",
-    "$env:USERPROFILE\.vscode\extensions\$extDirName"
+$baseExtDirs = @(
+    "$env:USERPROFILE\.antigravity-ide\extensions",
+    "$env:USERPROFILE\.antigravity\extensions",
+    "$env:USERPROFILE\.vscode\extensions"
 )
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " Installing Thruster Extension (v0.1.0)" -ForegroundColor Cyan
+Write-Host " Installing Thruster Extension (v0.1.1)" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
-foreach ($target in $targetPaths) {
-    $parent = Split-Path $target -Parent
-    if (Test-Path $parent) {
-        if (Test-Path $target) {
-            Remove-Item -Recurse -Force $target -ErrorAction SilentlyContinue
+foreach ($base in $baseExtDirs) {
+    if (Test-Path $base) {
+        # Check for any existing thruster extension installs and update them
+        $existing = Get-ChildItem -Path $base -Directory -Filter "*thruster*" -ErrorAction SilentlyContinue
+        $targets = @()
+        if ($existing) {
+            foreach ($item in $existing) {
+                $targets += $item.FullName
+            }
+        }
+        $defaultTarget = Join-Path $base $extDirName
+        if ($targets -notcontains $defaultTarget) {
+            $targets += $defaultTarget
         }
 
-        if ($CopyOnly) {
-            New-Item -ItemType Directory -Path $target -Force | Out-Null
-            Copy-Item -Path "$sourceDir\package.json", "$sourceDir\extension.js", "$sourceDir\README.md" -Destination $target -Force
-            Write-Host " [COPIED] $target" -ForegroundColor Green
-        } else {
-            try {
-                New-Item -ItemType Junction -Path $target -Target $sourceDir -Force | Out-Null
-                Write-Host " [LINKED (Live Junction)] $target -> $sourceDir" -ForegroundColor Green
-            } catch {
-                # Fallback to copy if junction fails
+        foreach ($target in $targets) {
+            Write-Host " Updating: $target" -ForegroundColor Cyan
+            if (Test-Path $target) {
+                # If it's a junction/symlink or directory, remove and recreate
+                try {
+                    cmd /c rmdir "$target" 2>$null
+                } catch {}
+                if (Test-Path $target) {
+                    Remove-Item -Recurse -Force $target -ErrorAction SilentlyContinue
+                }
+            }
+
+            if ($CopyOnly) {
                 New-Item -ItemType Directory -Path $target -Force | Out-Null
-                Copy-Item -Path "$sourceDir\package.json", "$sourceDir\extension.js", "$sourceDir\README.md" -Destination $target -Force
-                Write-Host " [COPIED (Fallback)] $target" -ForegroundColor Yellow
+                Copy-Item -Path "$sourceDir\package.json", "$sourceDir\extension.js", "$sourceDir\README.md", "$sourceDir\Thruster.png", "$sourceDir\LICENSE" -Destination $target -Force
+                Write-Host " [COPIED] $target" -ForegroundColor Green
+            } else {
+                try {
+                    New-Item -ItemType Junction -Path $target -Target $sourceDir -Force | Out-Null
+                    Write-Host " [LINKED (Live Junction)] $target -> $sourceDir" -ForegroundColor Green
+                } catch {
+                    New-Item -ItemType Directory -Path $target -Force | Out-Null
+                    Copy-Item -Path "$sourceDir\package.json", "$sourceDir\extension.js", "$sourceDir\README.md", "$sourceDir\Thruster.png", "$sourceDir\LICENSE" -Destination $target -Force
+                    Write-Host " [COPIED (Fallback)] $target" -ForegroundColor Yellow
+                }
             }
         }
     }
