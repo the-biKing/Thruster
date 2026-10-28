@@ -78,6 +78,8 @@ def build():
         ('README.md', 'extension/README.md'),
         ('LICENSE', 'extension/LICENSE'),
         ('Thruster.png', 'extension/Thruster.png'),
+        ('scripts/flash_runner.py', 'extension/scripts/flash_runner.py'),
+        ('scripts/flash_runner.ps1', 'extension/scripts/flash_runner.ps1'),
     ]
 
     with zipfile.ZipFile(output_filename, 'w', compression=zipfile.ZIP_DEFLATED) as z:

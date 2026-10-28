@@ -838,7 +838,51 @@ function isSketchAlreadyCompiled(sketchDir, fqbn) {
     }
 }
 
-function recordSuccessfulCompile(sketchDir, fqbn) {
+function parseMemoryUsage(compileOutput) {
+    if (!compileOutput) return null;
+
+    let flashUsed = null, flashMax = null, flashPercent = null;
+    let ramUsed = null, ramMax = null, ramPercent = null, ramFree = null;
+
+    const flashMatch = compileOutput.match(/Sketch uses\s+([0-9,]+)\s+bytes\s+\(?([0-9.]+)%?\)?\s+of program storage space\.\s+Maximum is\s+([0-9,]+)\s+bytes/i);
+    if (flashMatch) {
+        flashUsed = parseInt(flashMatch[1].replace(/,/g, ''), 10);
+        flashPercent = parseFloat(flashMatch[2]);
+        flashMax = parseInt(flashMatch[3].replace(/,/g, ''), 10);
+    }
+
+    const ramMatch = compileOutput.match(/Global variables use\s+([0-9,]+)\s+bytes\s+\(?([0-9.]+)%?\)?\s+of dynamic memory(?:,\s+leaving\s+([0-9,]+)\s+bytes for local variables)?\.\s+Maximum is\s+([0-9,]+)\s+bytes/i);
+    if (ramMatch) {
+        ramUsed = parseInt(ramMatch[1].replace(/,/g, ''), 10);
+        ramPercent = parseFloat(ramMatch[2]);
+        if (ramMatch[3]) ramFree = parseInt(ramMatch[3].replace(/,/g, ''), 10);
+        ramMax = parseInt(ramMatch[4].replace(/,/g, ''), 10);
+    }
+
+    if (!flashUsed && !flashMax) return null;
+
+    const flashFree = (flashMax && flashUsed) ? Math.max(0, flashMax - flashUsed) : null;
+    if (ramMax && ramUsed && ramFree === null) {
+        ramFree = Math.max(0, ramMax - ramUsed);
+    }
+
+    return {
+        flash: {
+            used: flashUsed,
+            max: flashMax,
+            free: flashFree,
+            percent: flashPercent || (flashMax ? parseFloat(((flashUsed / flashMax) * 100).toFixed(1)) : null)
+        },
+        ram: ramMax ? {
+            used: ramUsed,
+            max: ramMax,
+            free: ramFree,
+            percent: ramPercent || parseFloat(((ramUsed / ramMax) * 100).toFixed(1))
+        } : null
+    };
+}
+
+function recordSuccessfulCompile(sketchDir, fqbn, memory = null) {
     try {
         const buildInfoFile = getBuildInfoPath(sketchDir);
         const dir = path.dirname(buildInfoFile);
@@ -851,10 +895,23 @@ function recordSuccessfulCompile(sketchDir, fqbn) {
             fqbn,
             sketchDir,
             timestamp: Date.now(),
-            fingerprint
+            fingerprint,
+            memory: memory || null
         };
         fs.writeFileSync(buildInfoFile, JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {}
+}
+
+function getCachedMemoryInfo(sketchDir) {
+    try {
+        const buildInfoFile = getBuildInfoPath(sketchDir);
+        if (fs.existsSync(buildInfoFile)) {
+            const raw = fs.readFileSync(buildInfoFile, 'utf8');
+            const data = JSON.parse(raw);
+            return data.memory || null;
+        }
+    } catch (e) {}
+    return null;
 }
 
 function invalidateCompileState(sketchDir) {
@@ -938,19 +995,20 @@ async function compileWithSmartResolver(sketchDir, fqbn, cliPath, term) {
 
         if (result.success) {
             sendTerminalEcho(term, `=== Thruster: Compilation Successful! ===`, 'green');
-            return true;
+            const memory = parseMemoryUsage(result.output);
+            return { success: true, memory, output: result.output };
         }
 
         const missingHeader = findMissingHeader(result.output);
 
         if (!missingHeader || resolverMode === 'off') {
             term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return false;
+            return null;
         }
 
         if (installedInThisRun.has(missingHeader.toLowerCase())) {
             term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return false;
+            return null;
         }
 
         sendTerminalEcho(term, `=== Thruster Smart Resolver: Detected missing header <${missingHeader}.h> ===`, 'yellow');
@@ -959,7 +1017,7 @@ async function compileWithSmartResolver(sketchDir, fqbn, cliPath, term) {
         if (!foundLib) {
             sendTerminalEcho(term, `=== Thruster: No matching library found in registry for <${missingHeader}.h> ===`, 'red');
             term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return false;
+            return null;
         }
 
         if (resolverMode === 'with warning') {
@@ -969,7 +1027,7 @@ async function compileWithSmartResolver(sketchDir, fqbn, cliPath, term) {
             );
             if (userPick !== "Install & Recompile") {
                 term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-                return false;
+                return null;
             }
         }
 
@@ -979,12 +1037,12 @@ async function compileWithSmartResolver(sketchDir, fqbn, cliPath, term) {
         const success = await installLibraryAsync(foundLib, cliPath, term);
         if (!success) {
             term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return false;
+            return null;
         }
         sendTerminalEcho(term, `=== Installed '${foundLib}'! Recompiling... ===`, 'cyan');
     }
 
-    return false;
+    return null;
 }
 
 async function scanAndInstallSketchLibraries(sketchDir, cliPath, term) {
@@ -1108,6 +1166,25 @@ function updateState() {
     }
 }
 
+function getLogStats() {
+    const root = getWorkspaceRoot();
+    if (!root) return { flashCount: 0, crashCount: 0, hasLogs: false };
+    const logsDir = path.join(root, '.thruster', 'logs');
+    const crashesDir = path.join(root, '.thruster', 'crashes');
+    let flashCount = 0, crashCount = 0;
+    try {
+        if (fs.existsSync(logsDir)) {
+            flashCount = fs.readdirSync(logsDir).filter(f => f.endsWith('.log')).length;
+        }
+    } catch (e) {}
+    try {
+        if (fs.existsSync(crashesDir)) {
+            crashCount = fs.readdirSync(crashesDir).filter(f => f.endsWith('.log')).length;
+        }
+    } catch (e) {}
+    return { flashCount, crashCount, hasLogs: (flashCount > 0 || crashCount > 0) };
+}
+
 function getSystemHealthState() {
     const cliPath = resolveArduinoCliPath();
     const isCliValid = !!(cliPath && checkBinaryRunnable(cliPath));
@@ -1121,6 +1198,8 @@ function getSystemHealthState() {
     const board = (config && config.board) || 'esp32:esp32:nodemcu-32s';
     const boardName = (config && config.boardName) || 'NodeMCU-32S (ESP32)';
     const port = (config && config.port) || 'auto';
+    const maxFlashLogs = (config && config.maxFlashLogs) || vsConfig.get('maxFlashLogs', 10);
+    const maxCrashLogs = (config && config.maxCrashLogs) || vsConfig.get('maxCrashLogs', 10);
 
     return {
         cli: {
@@ -1134,8 +1213,11 @@ function getSystemHealthState() {
             baudRate,
             board,
             boardName,
-            port
+            port,
+            maxFlashLogs,
+            maxCrashLogs
         },
+        logs: getLogStats(),
         system: {
             platform: process.platform,
             arch: process.arch,
@@ -1592,7 +1674,37 @@ function getSettingsWebviewHtml(state) {
             </div>
         </div>
 
-        <!-- 4. Community & Support -->
+        <!-- 4. Flashing Logs & Crash Retention (.thruster) -->
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">📁 Flashing Logs & Crash Retention (.thruster)</h2>
+            </div>
+            <div style="font-size: 12.5px; opacity: 0.85; margin-bottom: 14px;">
+                Detailed upload logs are cleanly routed to <code>.thruster/logs</code> and <code>.thruster/crashes</code>, keeping your terminal focused on the live single-line progress bar. Older logs beyond your retention limits are automatically pruned.
+            </div>
+
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="max-flash-logs">Max Successful Flash Logs to Keep:</label>
+                    <input type="number" id="max-flash-logs" min="1" max="100" value="${state.settings.maxFlashLogs || 10}" />
+                    <div style="font-size: 11px; opacity: 0.7; margin-top: 4px;">Currently stored: <b>${state.logs.flashCount}</b> logs</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="max-crash-logs">Max Crash Logs to Keep:</label>
+                    <input type="number" id="max-crash-logs" min="1" max="100" value="${state.settings.maxCrashLogs || 10}" />
+                    <div style="font-size: 11px; opacity: 0.7; margin-top: 4px;">Currently stored: <b>${state.logs.crashCount}</b> crash logs</div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+                <button class="secondary" id="btn-open-logs">📂 Open .thruster/logs</button>
+                <button class="secondary" id="btn-open-crashes">⚠️ Open .thruster/crashes</button>
+                <button class="secondary" id="btn-clear-logs">🗑️ Clear All Logs</button>
+            </div>
+        </div>
+
+        <!-- 5. Community & Support -->
         <div class="card">
             <div class="card-header">
                 <h2 class="card-title">💬 Community & Issue Reporting</h2>
@@ -1648,6 +1760,26 @@ function getSettingsWebviewHtml(state) {
 
         document.getElementById('baud-select')?.addEventListener('change', (e) => {
             vscode.postMessage({ command: 'setBaud', value: e.target.value });
+        });
+
+        document.getElementById('max-flash-logs')?.addEventListener('change', (e) => {
+            vscode.postMessage({ command: 'setMaxFlashLogs', value: e.target.value });
+        });
+
+        document.getElementById('max-crash-logs')?.addEventListener('change', (e) => {
+            vscode.postMessage({ command: 'setMaxCrashLogs', value: e.target.value });
+        });
+
+        document.getElementById('btn-open-logs')?.addEventListener('click', () => {
+            vscode.postMessage({ command: 'openLogsDir' });
+        });
+
+        document.getElementById('btn-open-crashes')?.addEventListener('click', () => {
+            vscode.postMessage({ command: 'openCrashesDir' });
+        });
+
+        document.getElementById('btn-clear-logs')?.addEventListener('click', () => {
+            vscode.postMessage({ command: 'clearAllLogs' });
         });
 
         document.getElementById('btn-select-board')?.addEventListener('click', () => {
@@ -1763,6 +1895,56 @@ function openSettingsPanel(context) {
                 vscode.window.showInformationMessage(`Thruster: Default baud rate set to ${baud}.`);
                 if (settingsPanel) {
                     settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
+                }
+                break;
+            }
+            case 'setMaxFlashLogs': {
+                const count = Math.max(1, parseInt(msg.value, 10) || 10);
+                await vscode.workspace.getConfiguration('thruster').update('maxFlashLogs', count, vscode.ConfigurationTarget.Global);
+                if (loadConfig()) saveConfig({ maxFlashLogs: count });
+                vscode.window.showInformationMessage(`Thruster: Max flash logs retention set to ${count}.`);
+                if (settingsPanel) {
+                    settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
+                }
+                break;
+            }
+            case 'setMaxCrashLogs': {
+                const count = Math.max(1, parseInt(msg.value, 10) || 10);
+                await vscode.workspace.getConfiguration('thruster').update('maxCrashLogs', count, vscode.ConfigurationTarget.Global);
+                if (loadConfig()) saveConfig({ maxCrashLogs: count });
+                vscode.window.showInformationMessage(`Thruster: Max crash logs retention set to ${count}.`);
+                if (settingsPanel) {
+                    settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
+                }
+                break;
+            }
+            case 'openLogsDir': {
+                const root = getWorkspaceRoot();
+                if (root) {
+                    const p = path.join(root, '.thruster', 'logs');
+                    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+                    vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(p));
+                }
+                break;
+            }
+            case 'openCrashesDir': {
+                const root = getWorkspaceRoot();
+                if (root) {
+                    const p = path.join(root, '.thruster', 'crashes');
+                    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+                    vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(p));
+                }
+                break;
+            }
+            case 'clearAllLogs': {
+                const root = getWorkspaceRoot();
+                if (root) {
+                    const lDir = path.join(root, '.thruster', 'logs');
+                    const cDir = path.join(root, '.thruster', 'crashes');
+                    try { if (fs.existsSync(lDir)) fs.readdirSync(lDir).forEach(f => fs.unlinkSync(path.join(lDir, f))); } catch (e) {}
+                    try { if (fs.existsSync(cDir)) fs.readdirSync(cDir).forEach(f => fs.unlinkSync(path.join(cDir, f))); } catch (e) {}
+                    vscode.window.showInformationMessage("Thruster: Cleared all log and crash files in .thruster.");
+                    if (settingsPanel) settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
                 }
                 break;
             }
@@ -1948,9 +2130,18 @@ function activate(context) {
 
         try {
             setBusy(true);
-            const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-            if (ok) {
-                recordSuccessfulCompile(sketchDir, fqbn);
+            const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+            if (res && res.success) {
+                recordSuccessfulCompile(sketchDir, fqbn, res.memory);
+                if (res.memory) {
+                    const mem = res.memory;
+                    if (mem.flash) {
+                        sendTerminalEcho(term, `📊 Program Storage (Flash): ${mem.flash.used.toLocaleString()} / ${mem.flash.max.toLocaleString()} bytes (${mem.flash.percent}%) [${mem.flash.free.toLocaleString()} bytes free]`, 'cyan');
+                    }
+                    if (mem.ram) {
+                        sendTerminalEcho(term, `📊 Dynamic Memory (RAM):    ${mem.ram.used.toLocaleString()} / ${mem.ram.max.toLocaleString()} bytes (${mem.ram.percent}%) [${mem.ram.free.toLocaleString()} bytes free]`, 'cyan');
+                    }
+                }
                 vscode.window.showInformationMessage("Thruster: Compilation verified successfully!");
             } else {
                 invalidateCompileState(sketchDir);
@@ -1996,34 +2187,62 @@ function activate(context) {
 
         const isUpToDate = isSketchAlreadyCompiled(sketchDir, fqbn);
         const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
+        const statusFile = path.join(os.tmpdir(), `thruster_status_${Date.now()}.txt`);
 
         try {
             setBusy(true);
+            let memInfo = null;
             if (isUpToDate) {
                 sendTerminalEcho(term, `=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
                 sendTerminalEcho(term, `=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
+                memInfo = getCachedMemoryInfo(sketchDir);
             } else {
-                const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-                if (!ok) {
+                const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+                if (!res || !res.success) {
                     invalidateCompileState(sketchDir);
                     return;
                 }
-                recordSuccessfulCompile(sketchDir, fqbn);
+                memInfo = res.memory;
+                recordSuccessfulCompile(sketchDir, fqbn, memInfo);
             }
 
             fs.writeFileSync(lockFile, 'busy', 'utf8');
-            sendTerminalEcho(term, `=== Thruster: Flashing (Uploading) to ${port}... ===`, 'cyan');
+
+            const workspaceDir = getWorkspaceRoot() || sketchDir;
+            const jobFile = path.join(os.tmpdir(), `thruster_job_${Date.now()}.json`);
+            const jobData = {
+                cliPath,
+                port,
+                fqbn,
+                sketchDir,
+                workspaceDir,
+                lockFile,
+                statusFile,
+                maxLogs: (config && config.maxFlashLogs) || 10,
+                maxCrashLogs: (config && config.maxCrashLogs) || 10,
+                memory: memInfo,
+                monitor: false,
+                baud: (config && config.baudRate) || 115200
+            };
+            fs.writeFileSync(jobFile, JSON.stringify(jobData, null, 2), 'utf8');
+
+            const runnerPy = path.join(context.extensionPath, 'scripts', 'flash_runner.py');
+            const runnerPs1 = path.join(context.extensionPath, 'scripts', 'flash_runner.ps1');
+
             let uploadCmd;
             if (isWin) {
-                uploadCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}" } finally { Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }`;
+                uploadCmd = `& powershell -ExecutionPolicy Bypass -File "${runnerPs1}" -JobFile "${jobFile}"`;
             } else {
-                uploadCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; rm -f "${lockFile}"`;
+                uploadCmd = `python3 "${runnerPy}" --job "${jobFile}"`;
             }
             term.sendText(uploadCmd);
             await waitForLockRelease(lockFile);
         } finally {
             try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
+            try { if (fs.existsSync(statusFile)) fs.unlinkSync(statusFile); } catch (e) { }
             setBusy(false);
+            isMonitoring = false;
+            updateState();
         }
     }));
 
@@ -2068,25 +2287,49 @@ function activate(context) {
 
         try {
             setBusy(true);
+            let memInfo = null;
             if (isUpToDate) {
                 sendTerminalEcho(term, `=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
                 sendTerminalEcho(term, `=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
+                memInfo = getCachedMemoryInfo(sketchDir);
             } else {
-                const ok = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
-                if (!ok) {
+                const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+                if (!res || !res.success) {
                     invalidateCompileState(sketchDir);
                     return;
                 }
-                recordSuccessfulCompile(sketchDir, fqbn);
+                memInfo = res.memory;
+                recordSuccessfulCompile(sketchDir, fqbn, memInfo);
             }
 
             fs.writeFileSync(lockFile, 'busy', 'utf8');
-            sendTerminalEcho(term, `=== Thruster: Flashing (Uploading) to ${port}... ===`, 'cyan');
+
+            const workspaceDir = getWorkspaceRoot() || sketchDir;
+            const jobFile = path.join(os.tmpdir(), `thruster_job_${Date.now()}.json`);
+            const jobData = {
+                cliPath,
+                port,
+                fqbn,
+                sketchDir,
+                workspaceDir,
+                lockFile,
+                statusFile,
+                maxLogs: (config && config.maxFlashLogs) || 10,
+                maxCrashLogs: (config && config.maxCrashLogs) || 10,
+                memory: memInfo,
+                monitor: true,
+                baud: baud || 115200
+            };
+            fs.writeFileSync(jobFile, JSON.stringify(jobData, null, 2), 'utf8');
+
+            const runnerPy = path.join(context.extensionPath, 'scripts', 'flash_runner.py');
+            const runnerPs1 = path.join(context.extensionPath, 'scripts', 'flash_runner.ps1');
+
             let flashAndMonitorCmd;
             if (isWin) {
-                flashAndMonitorCmd = `try { & "${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; $ec = $LASTEXITCODE } catch { $ec = 1 } finally { Set-Content -Path "${statusFile}" -Value $ec -Force; Remove-Item -Path "${lockFile}" -Force -ErrorAction SilentlyContinue }; if ($ec -eq 0) { Write-Host "\`n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===" -ForegroundColor Green; & "${cliPath}" monitor -p "${port}" -c baudrate=${baud} }`;
+                flashAndMonitorCmd = `& powershell -ExecutionPolicy Bypass -File "${runnerPs1}" -JobFile "${jobFile}"`;
             } else {
-                flashAndMonitorCmd = `"${cliPath}" upload -p "${port}" --fqbn ${fqbn} "${sketchDir}"; EC=$?; printf "%s" "$EC" > "${statusFile}"; rm -f "${lockFile}"; if [ $EC -eq 0 ]; then printf "\\033[1;32m\\n=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===\\033[0m\\n"; "${cliPath}" monitor -p "${port}" -c baudrate=${baud}; fi`;
+                flashAndMonitorCmd = `python3 "${runnerPy}" --job "${jobFile}"`;
             }
             term.sendText(flashAndMonitorCmd);
             await waitForLockRelease(lockFile);
