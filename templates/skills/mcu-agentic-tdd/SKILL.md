@@ -1,7 +1,7 @@
 ---
 name: mcu-agentic-tdd
 description: >-
-  Architect, implement, and verify microcontroller (MCU) firmware using Preprocessor-Guarded Detachable Unit Testing. Activate when writing Arduino/C++ embedded code, building testable firmware over Serial, or orchestrating the MCU compile-flash-test loop with Thruster MCP tools.
+  Develop, test, and verify microcontroller (MCU) firmware using Preprocessor-Guarded Detachable Unit Testing. Activate when writing Arduino/C++ embedded code, building testable firmware over Serial, or orchestrating the MCU compile-flash-test loop with Thruster MCP tools.
 ---
 
 # Microcontroller Preprocessor-Guarded Unit Testing (MCU Agentic Testing)
@@ -12,17 +12,17 @@ This skill guides you through developing, testing, and debugging embedded microc
 
 When writing or modifying firmware for an MCU:
 
-1. **Respect Existing Architecture**:
-   - **Do not** force the codebase into a specific architectural pattern (such as Event-Driven Architecture or state machines) unless the project already uses it.
-   - Follow whatever architecture the project currently employs: procedural functions, object-oriented classes, modular C++, or simple Arduino routines.
+1. **Standard Arduino Architecture (`setup()` & `loop()`)**:
+   - Write natural, idiomatic Arduino C++ code with standard `setup()` and `loop()`.
+   - Structure sketches with clean helper functions and classes appropriate for the task.
 
 2. **Separate Pure Logic from Direct Hardware IO**:
-   - Extract calculations, math, threshold checks, calibration scaling, packet decoders, or state transitions into pure or testable functions with explicit inputs and outputs.
-   - Keep direct hardware calls (`analogRead`, `digitalWrite`, hardware registers) separate from the core algorithmic logic so functions can be unit-tested directly on the MCU without requiring physical human manipulation of hardware.
+   - Write core calculations, math formulas, threshold checks, calibration curves, or packet decoders as standalone functions with explicit inputs and return values.
+   - Example: Keep `int calculate_pwm(int raw_adc)` separate from `analogRead(A0)`. This allows mathematical logic to be verified independently of physical sensors.
    - See [Preprocessor Testing Reference](references/preprocessor_testing.md).
 
 3. **Preprocessor-Guarded Tests (`#ifdef UNIT_TEST_MODE`)**:
-   - Guard all test routines, runner calls, and serial test prints with `#ifdef UNIT_TEST_MODE`.
+   - Wrap test routines, assertions, and test serial prints inside `#ifdef UNIT_TEST_MODE`.
    - In test mode: `#ifdef UNIT_TEST_MODE` compiles the test assertions and prints `[PASS]` or `[FAIL]` tokens over Serial.
    - In production release: `UNIT_TEST_MODE` is undefined. The preprocessor strips all test code and strings, leaving **0 bytes** of Flash and RAM overhead in the final binary.
    - See [Detachable Tests Reference](references/detachable_tests.md).
@@ -37,7 +37,7 @@ When writing or modifying firmware for an MCU:
 
 ## 2. The Agentic MCU Development Workflow
 
-Always follow this closed-loop cycle when adding features or fixing bugs:
+Always follow this closed-loop cycle when implementing features or fixing bugs:
 
 ```mermaid
 graph TD
@@ -51,7 +51,7 @@ graph TD
 
 ### Step 1: Write Logic & Preprocessor-Guarded Test
 ```cpp
-// In motor_control.cpp or sketch:
+// In motor_control.cpp or main sketch:
 int calculate_pwm_from_voltage(int raw_adc) {
     if (raw_adc < 1500) return 0;
     if (raw_adc > 4095) raw_adc = 4095;
