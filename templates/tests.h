@@ -1,22 +1,18 @@
 /**
  * Thruster Detachable Test Harness (tests.h)
  * -------------------------------------------------------------
- * Combines Event-Driven Architecture (EDA) and Test-Driven Design (TDD)
- * for Microcontroller (MCU) development.
+ * Lightweight preprocessor-guarded test macros for Microcontroller (MCU) development.
  *
  * DETACHABLE ZERO-OVERHEAD DESIGN:
- * - In Development: Define THRUSTER_TEST_MODE (e.g. #define THRUSTER_TEST_MODE 1).
- *   The test runner listens over Serial and allows AI agents or developers
- *   to inject events and verify assertions automatically.
- * - In Production: Comment out or remove #define THRUSTER_TEST_MODE.
- *   All test assertions, strings, and runners compile away to empty no-ops ((void)0),
- *   leaving 0 bytes of flash and RAM overhead in the final release binary!
+ * - In Development: Define UNIT_TEST_MODE or compile with test_mode: true.
+ * - In Production: Omit UNIT_TEST_MODE. All test assertions and runners compile
+ *   away to empty no-ops ((void)0), leaving 0 bytes of flash and RAM overhead!
  */
 
 #ifndef THRUSTER_TESTS_H
 #define THRUSTER_TESTS_H
 
-#if defined(THRUSTER_TEST_MODE)
+#if defined(UNIT_TEST_MODE) || defined(THRUSTER_TEST_MODE)
 
 #include <Arduino.h>
 

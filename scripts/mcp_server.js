@@ -287,17 +287,31 @@ function parseTestResults(logs) {
         const trimmed = line.trim();
         if (trimmed.startsWith('[TEST:PASS]')) {
             passes.push(trimmed.replace('[TEST:PASS]', '').trim());
+        } else if (trimmed.startsWith('[PASS]')) {
+            passes.push(trimmed.replace('[PASS]', '').trim());
         } else if (trimmed.startsWith('[TEST:FAIL]')) {
             failures.push(trimmed.replace('[TEST:FAIL]', '').trim());
-        } else if (trimmed.startsWith('[TEST:SUMMARY]')) {
-            // [TEST:SUMMARY] total=X, passed=Y, failed=Z
-            const m = trimmed.match(/total=(\d+),\s*passed=(\d+),\s*failed=(\d+)/i);
+        } else if (trimmed.startsWith('[FAIL]')) {
+            failures.push(trimmed.replace('[FAIL]', '').trim());
+        } else if (trimmed.includes('[TEST:SUMMARY]') || trimmed.includes('[SUMMARY]')) {
+            const m = trimmed.match(/(?:total|count)=(\d+)[,\s]+passed=(\d+)[,\s]+failed=(\d+)/i) ||
+                      trimmed.match(/passed=(\d+)[,\s]+failed=(\d+)/i);
             if (m) {
-                summary = {
-                    total: parseInt(m[1], 10),
-                    passed: parseInt(m[2], 10),
-                    failed: parseInt(m[3], 10)
-                };
+                if (m.length === 4) {
+                    summary = {
+                        total: parseInt(m[1], 10),
+                        passed: parseInt(m[2], 10),
+                        failed: parseInt(m[3], 10)
+                    };
+                } else if (m.length === 3) {
+                    const p = parseInt(m[1], 10);
+                    const f = parseInt(m[2], 10);
+                    summary = {
+                        total: p + f,
+                        passed: p,
+                        failed: f
+                    };
+                }
             }
         }
     }
@@ -358,7 +372,7 @@ async function toolCompileSketch(args) {
 
     const cmdArgs = ['compile', '--fqbn', fqbn, sketchDir];
     if (args.test_mode) {
-        cmdArgs.push('--build-property', 'build.extra_flags="-DTHRUSTER_TEST_MODE=1"');
+        cmdArgs.push('--build-property', 'build.extra_flags="-DUNIT_TEST_MODE=1 -DTHRUSTER_TEST_MODE=1"');
     }
 
     const result = await new Promise((resolve) => {
@@ -504,9 +518,11 @@ async function toolRunSerialTest(args) {
     }
 
     const baud = args.baud_rate || config.baudRate || 115200;
-    const command = args.command || 'CMD:TEST:ALL';
+    const command = args.command !== undefined ? args.command : null;
     const timeoutMs = args.timeout_ms || 6000;
-    const expectedPattern = args.expected_pattern ? new RegExp(args.expected_pattern, 'i') : /\[TEST:SUMMARY\]|\[TEST:PASS\]|\[TEST:FAIL\]/i;
+    const expectedPattern = args.expected_pattern
+        ? new RegExp(args.expected_pattern, 'i')
+        : /\[(?:TEST:)?(?:SUMMARY|PASS|FAIL)\]/i;
 
     return new Promise((resolve) => {
         let logs = '';
@@ -595,13 +611,15 @@ async function toolRunSerialTest(args) {
         });
 
         // Microcontrollers (especially ESP32 / Arduino) toggle DTR/RTS and reboot when serial connects.
-        // Wait 700ms for reboot to complete before sending test trigger command.
-        setTimeout(() => {
-            if (!proc.killed && proc.stdin.writable) {
-                proc.stdin.write(command + '\n');
-                commandSent = true;
-            }
-        }, 700);
+        // Wait 700ms for reboot to complete before sending test trigger command (if specified).
+        if (command) {
+            setTimeout(() => {
+                if (!proc.killed && proc.stdin.writable) {
+                    proc.stdin.write(command + '\n');
+                    commandSent = true;
+                }
+            }, 700);
+        }
     });
 }
 
@@ -782,7 +800,7 @@ async function toolSetMcuConfig(args) {
 const TOOLS = [
     {
         name: 'compile_sketch',
-        description: 'Compiles the MCU sketch using arduino-cli. Returns compilation status, detailed line-by-line compiler errors, and Flash/RAM memory metrics.',
+        description: 'Compiles the MCU sketch using arduino-cli. Returns compilation status, detailed line-by-line compiler errors, and Flash/RAM memory metrics. Set test_mode: true to compile with -DUNIT_TEST_MODE=1 and -DTHRUSTER_TEST_MODE=1 for detachable testing.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -796,7 +814,7 @@ const TOOLS = [
                 },
                 test_mode: {
                     type: 'boolean',
-                    description: 'If true, defines THRUSTER_TEST_MODE=1 during compilation to enable detachable test suites.'
+                    description: 'If true, compiles with -DUNIT_TEST_MODE=1 and -DTHRUSTER_TEST_MODE=1 to activate preprocessor-guarded unit tests.'
                 }
             }
         }
@@ -824,17 +842,17 @@ const TOOLS = [
     },
     {
         name: 'run_serial_test',
-        description: 'Executes an automated test over Serial. Connects to the MCU, sends a test stimulus command, captures test assertion outputs ([TEST:PASS], [TEST:FAIL], [TEST:SUMMARY]), and cleanly closes the port so it can be reused immediately.',
+        description: 'Executes an automated unit test over Serial. Connects to the MCU, sends an optional command (or listens directly upon boot), captures assertion outputs ([PASS], [FAIL], [SUMMARY]), and cleanly closes the port so it can be reused immediately.',
         inputSchema: {
             type: 'object',
             properties: {
                 command: {
                     type: 'string',
-                    description: 'Test stimulus command to send over serial (e.g. "CMD:TEST:ALL", "CMD:EVENT:BUTTON_PRESS:1"). Default: "CMD:TEST:ALL".'
+                    description: 'Optional command to send over serial. If omitted, listens for unit tests executing in setup() upon boot.'
                 },
                 expected_pattern: {
                     type: 'string',
-                    description: 'Optional regex pattern indicating test completion. Default matches [TEST:SUMMARY], [TEST:PASS], or [TEST:FAIL].'
+                    description: 'Optional regex pattern indicating test completion. Default matches [SUMMARY], [PASS], or [FAIL].'
                 },
                 timeout_ms: {
                     type: 'number',

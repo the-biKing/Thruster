@@ -1,30 +1,36 @@
 # Serial Testing Protocol & Thruster MCP Reference
 
 Thruster enables AI agents to autonomously drive the embedded MCU development loop:
-`Edit Code` -> `Compile` -> `Flash` -> `Test via Serial` -> `Verify / Refactor`.
+`Edit Code` -> `Compile with test_mode` -> `Flash` -> `Test via Serial` -> `Verify / Refactor`.
 
-## Serial Protocol Specification
+## Serial Test Output Specification
 
-When `THRUSTER_TEST_MODE` is enabled, the firmware listens on the configured Serial port (`115200` bps by default) for newline-terminated (`\n`) ASCII command packets.
+When tests run, they output concise, machine-parseable tokens over Serial that the Thruster MCP server automatically captures and summarizes.
 
-### 1. Inbound Commands (Sent from Agent to MCU)
+### Standard Test Tokens
 
-| Command | Arguments | Description | Example |
-| :--- | :--- | :--- | :--- |
-| `CMD:PING` | None | Liveness check; MCU responds immediately with `[THRUSTER:PONG]` | `CMD:PING\n` |
-| `CMD:TEST:ALL` | None | Runs every test registered with `THRUSTER_REGISTER_TEST` sequentially | `CMD:TEST:ALL\n` |
-| `CMD:TEST:<NAME>` | Test Name | Runs only the specified test case | `CMD:TEST:button_press_toggles\n` |
-| `CMD:EVENT:<TYPE>:<DATA>` | Type (int), Data (int32) | Injects synthetic event into `on_thruster_event_command(type, data)` | `CMD:EVENT:2:0\n` |
+- `[PASS] <test_name>` or `[TEST:PASS] <test_name>`: Assertion or test passed.
+- `[FAIL] <test_name>` or `[TEST:FAIL] <test_name>`: Assertion or test failed.
+- `[SUMMARY] passed=X failed=Y` or `[TEST:SUMMARY] total=N, passed=P, failed=F`: (Optional) Summary counts.
 
-### 2. Outbound Markers (Emitted from MCU to Agent)
+Example output:
+```text
+=== MOTOR TESTS START ===
+[PASS] Low cutoff below 1500
+[PASS] Max PWM at 4095
+[PASS] Threshold boundary 1500
+=== MOTOR TESTS END ===
+```
 
-The firmware prints structured tokens that the Thruster MCP tool `run_serial_test` automatically parses:
-
-- `[TEST:START] <test_name>`: Test execution started.
-- `[TEST:PASS] <test_name>`: Test passed all assertions.
-- `[TEST:FAIL] <description> | Expected: X Actual: Y (<file>:<line>)`: Assertion failed.
-- `[TEST:SUMMARY] total=N, passed=P, failed=F`: Summary count of all executed tests.
-- `[TEST:EVENT_INJECTED] type=X data=Y`: Acknowledgment of synthetic event reception.
+Thruster MCP automatically parses these tokens and returns structured JSON:
+```json
+{
+  "status": "PASS",
+  "summary": { "total": 3, "passed": 3, "failed": 0 },
+  "passed_tests": ["Low cutoff below 1500", "Max PWM at 4095", "Threshold boundary 1500"],
+  "failed_tests": []
+}
+```
 
 ---
 
@@ -34,29 +40,30 @@ AI agents interact with the microcontroller through the following MCP tools:
 
 ### `compile_sketch`
 - **Parameters**: `sketch_path` (string, opt), `fqbn` (string, opt), `test_mode` (bool, opt)
+- **Behavior**: Compiles the sketch. When `test_mode: true` is passed, adds `-DUNIT_TEST_MODE=1` to activate `#ifdef UNIT_TEST_MODE` blocks.
 - **Output**:
   - `success`: `true` or `false`
   - `memory`: Flash & RAM bytes used, max, percent, and free
   - `errors`: Array of parsed compiler errors with line and column numbers
-  - `raw_output`: Full GCC/arduino-cli compiler logs
+  - `raw_output`: Full compiler logs
 
 ### `flash_sketch`
 - **Parameters**: `sketch_path` (string, opt), `port` (string, opt), `fqbn` (string, opt)
 - **Output**:
   - `success`: `true` or `false`
   - `port`: Port used for upload
-  - `raw_output`: Output from upload runner
+  - `raw_output`: Upload log
 
 ### `run_serial_test`
 - **Parameters**:
-  - `command`: Command to send (e.g. `"CMD:TEST:ALL"` or `"CMD:EVENT:2:0"`)
-  - `expected_pattern`: Optional regex pattern to wait for (default: `\[TEST:SUMMARY\]`)
-  - `timeout_ms`: Max milliseconds to wait (default: 6000)
+  - `command`: (Optional) command to send over Serial. If omitted, listens directly for tests running upon boot in `setup()`.
+  - `expected_pattern`: (Optional) regex pattern to wait for (default: `\[(?:TEST:)?(?:SUMMARY|PASS|FAIL)\]`).
+  - `timeout_ms`: Max milliseconds to wait (default: 6000ms).
 - **Output**:
   - `status`: `"PASS"`, `"FAIL"`, or `"TIMEOUT"`
-  - `summary`: `{ total: 4, passed: 4, failed: 0 }`
+  - `summary`: `{ total: 3, passed: 3, failed: 0 }`
   - `passed_tests`: List of test names that passed
-  - `failed_tests`: List of failure details and lines
+  - `failed_tests`: List of failure details
   - `logs`: Complete serial capture
 
 ### `read_serial` & `write_serial`

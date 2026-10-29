@@ -1,59 +1,44 @@
-# Detachable Testing Pattern for Embedded Firmware
+# Detachable Testing Pattern for Embedded Microcontrollers
 
-Embedded devices operate under strict memory, flash, and timing constraints. Test harnesses that remain in production firmware consume precious kilobytes of flash, waste RAM on assertion strings, and may introduce latency or security vulnerabilities.
+Embedded devices operate under strict memory, flash, and real-time timing constraints. Testing frameworks designed for PCs (like GoogleTest or Catch2) often require heavy C++ runtimes or OS support that cannot fit onto microcontrollers like ATmega328P, ESP32, or RP2040.
 
-Thruster solves this with the **Detachable Testing Pattern**.
+Thruster solves this with **Preprocessor-Guarded Detachable Testing**.
 
 ## How Detachable Testing Works
 
-All test definitions, assertion macros, test runners, and serial command listeners are isolated inside `tests.h` guarded by `THRUSTER_TEST_MODE`:
+All test definitions, assertion checks, and serial test prints are isolated inside `#ifdef UNIT_TEST_MODE` blocks:
 
 ```cpp
-#if defined(THRUSTER_TEST_MODE)
-    // Full Test Runner, Assertion Engine, and Serial Command Listener
-    #define TEST_ASSERT_TRUE(cond, desc) ...
-    #define thruster_test_init()         register_project_tests()
-    #define thruster_test_poll_serial()  ThrusterTestHarness::poll_serial()
-#else
-    // Production Release: Zero Flash / RAM / CPU Overhead
-    #define TEST_ASSERT_TRUE(cond, desc) ((void)0)
-    #define thruster_test_init()         ((void)0)
-    #define thruster_test_poll_serial()  ((void)0)
+#ifdef UNIT_TEST_MODE
+void run_tests() {
+    Serial.println("=== UNIT TESTS START ===");
+    bool ok1 = (sensor_scale_value(512) == 50);
+    Serial.println(ok1 ? "[PASS] Half scale" : "[FAIL] Half scale");
+    Serial.println("=== UNIT TESTS END ===");
+}
 #endif
 ```
 
 ## Two Modes of Operation
 
-### 1. Development & Automated Agent Testing
-In your sketch, keep `#define THRUSTER_TEST_MODE 1` at the top:
-
-```cpp
-#define THRUSTER_TEST_MODE 1
-#include "tests.h"
-
-void setup() {
-    Serial.begin(115200);
-    thruster_test_init();
-}
-
-void loop() {
-    thruster_test_poll_serial();
-}
+### 1. Test Mode (Autonomous Agent Verification)
+When Thruster MCP calls `compile_sketch` with `test_mode: true`, it automatically passes:
+```bash
+--build-property "build.extra_flags=-DUNIT_TEST_MODE=1"
 ```
-
-The Thruster MCP server or developer can now execute `run_serial_test`, send commands over Serial, and receive assertion outcomes.
+The compiler includes the test routines. Upon upload, the MCU executes the tests in `setup()` and prints `[PASS]` or `[FAIL]` tokens over Serial for the AI agent to verify.
 
 ### 2. Production Release Deploy
-When your firmware is verified and ready to ship to production:
-1. Comment out `#define THRUSTER_TEST_MODE 1` (or pass nothing to the compiler).
-2. The C++ preprocessor replaces all test calls with `((void)0)` no-ops, and dead-code elimination strips all test functions and assertion strings from the final binary.
-3. Alternatively, simply delete or exclude `tests.h` and the test blocks for 100% clean deployment.
+When compiling without `test_mode` (the default for normal builds):
+- The macro `UNIT_TEST_MODE` is undefined.
+- The C++ preprocessor completely skips the test block.
+- Dead-code elimination strips any unused test helper functions.
+- The final binary contains **0 bytes of test strings, 0 bytes of RAM overhead, and 0 execution latency**.
 
 ## Memory Impact Comparison
 
-| Component | Development Mode (`THRUSTER_TEST_MODE=1`) | Production Release Mode |
+| Component | Test Mode (`UNIT_TEST_MODE=1`) | Production Release Mode |
 | :--- | :--- | :--- |
-| Test Strings (`[TEST:FAIL]...`) | Stored in Flash (`F()`) | **0 bytes** |
-| Test Function Pointers | Stored in RAM/Flash | **0 bytes** |
-| Serial Buffer (`serial_buf`) | ~96 bytes RAM | **0 bytes** |
-| Execution Latency in `loop()` | Minimal (~1µs per cycle) | **0 ns (completely eliminated)** |
+| Test Strings (`"[PASS]..."`) | Stored in Flash | **0 bytes (completely removed)** |
+| Test Helper Functions | Compiled in Flash | **0 bytes (stripped by preprocessor)** |
+| Serial Test Overhead | Transmitted once at boot | **0 bytes / 0 cycles** |

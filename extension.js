@@ -521,33 +521,12 @@ async function setupAgenticDevelopment(context, root, verbose = true) {
         }
         fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf8');
 
-        // 4. Scaffold tests.h in active sketch folder or root
+        // 4. Scaffold tests.h in active sketch folder or root if missing
         const sketchDir = getActiveSketchDir() || root;
         const targetTestsH = path.join(sketchDir, 'tests.h');
         const sourceTestsH = path.join(templatesDir, 'tests.h');
         if (!fs.existsSync(targetTestsH) && fs.existsSync(sourceTestsH)) {
             fs.copyFileSync(sourceTestsH, targetTestsH);
-        }
-
-        // 5. If no .ino sketch exists in workspace, offer to create starter sketch
-        const currentSketchDir = getActiveSketchDir();
-        if (!currentSketchDir) {
-            const choice = await vscode.window.showInformationMessage(
-                "Thruster: No .ino sketch found in workspace. Create a starter Event-Driven sketch (with detachable tests)?",
-                "✨ Create Starter Sketch", "Skip"
-            );
-            if (choice === "✨ Create Starter Sketch") {
-                const folderName = path.basename(root);
-                const sketchFile = path.join(root, `${folderName}.ino`);
-                const sourceSketch = path.join(templatesDir, 'starter_sketch.ino');
-                if (fs.existsSync(sourceSketch)) {
-                    fs.copyFileSync(sourceSketch, sketchFile);
-                    try {
-                        const doc = await vscode.workspace.openTextDocument(sketchFile);
-                        await vscode.window.showTextDocument(doc);
-                    } catch (e) {}
-                }
-            }
         }
 
         if (verbose) {
@@ -1756,12 +1735,12 @@ function getSettingsWebviewHtml(state) {
                         `}
                     </div>
                     <div class="checklist-desc">
-                        Empowers AI agents (Antigravity IDE) to design with Event-Driven Architecture (EDA), execute Test-Driven Design (TDD) via Serial, and run the autonomous compile-flash-test loop.
+                        Empowers AI agents (Antigravity IDE) to write preprocessor-guarded unit tests, verify functions over Serial, and run the autonomous compile-flash-test loop with zero release overhead.
                     </div>
                     <div class="checklist-meta">
                         <strong>Antigravity Skill:</strong> ${state.agentic && state.agentic.hasSkill ? 'Installed (.agents/skills/mcu-agentic-tdd)' : 'Not installed'}<br>
                         <strong>Thruster MCP Server:</strong> ${state.agentic && state.agentic.hasMcp ? 'Configured (.agents/mcp_config.json)' : 'Not configured'}<br>
-                        <strong>Detachable tests.h:</strong> ${state.agentic && state.agentic.hasTestsH ? 'Present in sketch' : 'Not generated'}
+                        <strong>Detachable Test Unit:</strong> ${state.agentic && state.agentic.hasTestsH ? 'Present in sketch' : 'Preprocessor guarded'}
                     </div>
 
                     <div class="actions-row">
@@ -2271,26 +2250,8 @@ function activate(context) {
             arduinoCliPath: cliPath
         });
 
-        // Step 4: Agentic MCU Development Setup (Skills & MCP)
-        const agenticPick = await vscode.window.showQuickPick([
-            {
-                label: "$(sparkle) Enable Agentic MCU Development (Recommended)",
-                description: "Scaffold Antigravity Skills (.agents/skills/), Thruster MCP, and detachable tests.h",
-                enable: true
-            },
-            {
-                label: "$(dash) Skip Agentic Setup",
-                description: "Standard configuration only (board, port, baud rate)",
-                enable: false
-            }
-        ], {
-            placeHolder: "Thruster v1.0.0: Enable AI Agentic MCU Development (Skills & MCP)?",
-            ignoreFocusOut: true
-        });
-
-        if (agenticPick && agenticPick.enable) {
-            await setupAgenticDevelopment(context, root);
-        }
+        // Auto-configure Agentic MCU Development tools (.agents/skills and MCP server) in background
+        await setupAgenticDevelopment(context, root, false);
 
         ensureCppProperties(root);
         updateState();

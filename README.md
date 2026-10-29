@@ -2,42 +2,55 @@
 
 **Thruster** is a lightweight, zero-overhead extension for **Antigravity IDE** and **VS Code** that elevates embedded microcontroller development into a next-generation **Agentic Development Platform** across **macOS, Windows, and Linux**.
 
-With **Version 1.0.0**, Thruster introduces autonomous **Agent-Driven MCU Development** combining **Event-Driven Architecture (EDA)**, **Detachable Test-Driven Design (TDD)** via Serial, and a built-in **Model Context Protocol (MCP) Server**.
+With **Version 1.0.0**, Thruster introduces autonomous **Agent-Driven MCU Development** combining **Preprocessor-Guarded Detachable Testing** (`#ifdef UNIT_TEST_MODE`) via Serial, zero release overhead, and a built-in **Model Context Protocol (MCP) Server**.
 
 ---
 
 ## 🤖 What's New in v1.0.0: Autonomous Agentic MCU Development
 
-Thruster 1.0.0 bridges the gap between AI pair programmers (Google Antigravity IDE, Claude, etc.) and physical microcontrollers. Embedded programming has historically resisted automation because AI agents cannot physically touch buttons or inspect breadboards. Thruster solves this through architectural decoupling:
+Thruster 1.0.0 bridges the gap between AI pair programmers (Google Antigravity IDE, Claude, etc.) and physical microcontrollers. Rather than forcing your project into a rigid or invasive architecture, Thruster is **completely universal**: it works with whatever coding style your project already uses—procedural functions, object-oriented classes, state machines, or legacy Arduino sketches.
 
 ```mermaid
 graph LR
-    A[AI Agent / Antigravity] -->|1. Write Test & Logic| B[Firmware Sketch + tests.h]
-    B -->|2. MCP compile_sketch| C[GCC / arduino-cli]
+    A[AI Agent / Antigravity] -->|1. Write Code & #ifdef UNIT_TEST_MODE| B[Existing Codebase]
+    B -->|2. MCP compile_sketch -DUNIT_TEST_MODE| C[GCC / arduino-cli]
     C -->|3. MCP flash_sketch| D[Physical MCU Board]
     D -->|4. MCP run_serial_test| E[Serial Monitor Assertions]
     E -->|5. Structured Test Summary| A
-    A -->|6. Production Deploy| F[Zero-Overhead Binary]
+    A -->|6. Production Release Flash| F[Zero-Overhead Binary]
 ```
 
-### 1. Event-Driven Architecture (EDA) for Embedded Systems
-* **Hardware Decoupling:** Hardware pins (GPIO, ADC, timers) do not execute business logic. Instead, they emit events into a central dispatcher: `dispatch_event(type, data)`.
-* **Synthetic Stimulus Injection:** The AI agent can inject any physical event synthetically over Serial (`CMD:EVENT:<type>:<data>`) to verify complex state transitions without human manual intervention!
+### 1. Preprocessor-Guarded Detachable Testing (`#ifdef UNIT_TEST_MODE`)
+* **Zero Architecture Tax:** Write tests directly alongside your functional logic or in a test block without restructuring your project:
+  ```cpp
+  int calculate_pwm_from_voltage(int raw_adc) {
+      if (raw_adc < 1500) return 0; // Cutoff for battery protection
+      return (raw_adc - 1500) * 255 / (4095 - 1500);
+  }
 
-### 2. Detachable Test-Driven Design (`tests.h`)
-* **Test Isolation:** All test assertions (`TEST_ASSERT_TRUE`, `TEST_ASSERT_EQ`, `TEST_ASSERT_STR_EQ`), test runners, and serial command listeners are isolated inside `tests.h` under `#if defined(THRUSTER_TEST_MODE)`.
-* **Zero Production Overhead:** Simply comment out `#define THRUSTER_TEST_MODE` for release. Every test assertion, runner, and string compiles away to `((void)0)` no-ops, resulting in **exactly 0 bytes** of flash or RAM penalty in production builds!
+  #ifdef UNIT_TEST_MODE
+  void run_motor_tests(void) {
+      bool pass1 = (calculate_pwm_from_voltage(1000) == 0);
+      bool pass2 = (calculate_pwm_from_voltage(4095) == 255);
 
-### 3. Built-In Thruster MCP Server (`.agents/mcp_config.json`)
+      Serial.println(pass1 ? "[PASS] Low cutoff" : "[FAIL] Low cutoff");
+      Serial.println(pass2 ? "[PASS] Max PWM" : "[FAIL] Max PWM");
+  }
+  #endif
+  ```
+* **Zero Production Overhead:** In production releases, `UNIT_TEST_MODE` is undefined. The preprocessor strips all test functions, assertion checks, and string literals—**0 bytes of Flash, 0 bytes of RAM, 0 CPU cycles**.
+
+### 2. Built-In Thruster MCP Server (`.agents/mcp_config.json`)
 Thruster bundles a native, zero-dependency Node.js MCP server providing tools for the AI agent:
-* 🛠️ `compile_sketch`: Compiles firmware, parses line-by-line compiler errors, and returns Flash & RAM metrics.
+* 🛠️ `compile_sketch`: Compiles firmware, parses compiler errors with line numbers, and returns Flash & RAM metrics. Pass `test_mode: true` to compile with `-DUNIT_TEST_MODE=1`.
 * ⚡ `flash_sketch`: Automatically detects ports and uploads firmware.
-* 🧪 `run_serial_test`: Sends test stimuli over Serial, verifies assertions (`[TEST:PASS]`, `[TEST:FAIL]`, `[TEST:SUMMARY]`), and cleanly releases the serial port.
+* 🧪 `run_serial_test`: Connects to Serial, captures `[PASS]` and `[FAIL]` markers, and cleanly auto-releases the port.
 * 📡 `read_serial` & `write_serial`: Low-level serial communication and log streaming.
 * ⚙️ `get_mcu_config` & `set_mcu_config`: Inspects and updates board FQBN, port, and baud rate.
 
-### 4. Antigravity Skill (`.agents/skills/mcu-agentic-tdd/`)
-* Scaffolds an official Antigravity skill teaching the AI agent best practices for embedded architecture, progressive disclosure references, and the closed inner development loop.
+### 3. Silent & Seamless Project Setup
+* When you run `Thruster: Initialize Project`, Thruster silently configures `.agents/skills/` and `.agents/mcp_config.json` in the background with zero intrusive modal prompts.
+* Your AI agent is immediately equipped to compile, flash, and test your code autonomously.
 
 ---
 
@@ -49,7 +62,7 @@ Thruster bundles a native, zero-dependency Node.js MCP server providing tools fo
 * 📊 **Clean Single-Line Progress Bar & Memory Stats:** Replaces noisy multiline upload output with an elegant, in-place updating single-line progress bar and an instant breakdown of Program Flash and Dynamic RAM usage.
 * 📁 **Automated Log & Crash Retention (`.thruster`):** Detailed verbose upload logs and crash diagnostics are cleanly organized into `.thruster/logs` and `.thruster/crashes`. Retains the 10 latest logs by default (configurable in settings).
 * 🔄 **Smart Serial Monitor Management:** Whenever you click **Compile**, **Flash**, or switch settings while the Serial Monitor is active, Thruster automatically and cleanly exits the serial monitor, frees the serial port, and executes your command without typing command strings into the serial stream.
-* ⚙️ **Unified Settings & Control Center:** All configuration (Agentic MCU setup, Smart Library Auto-Resolver, baud rate, target board, serial port, and toolchain checks) is unified in a single dashboard accessible via the top-right toolbar.
+* ⚙️ **Unified Settings & Control Center:** All configuration (Agentic MCU tools, Smart Library Auto-Resolver, baud rate, target board, serial port, and toolchain checks) is unified in a single dashboard accessible via the top-right toolbar.
 * 📋 **Extension Readiness Checklist:** Live health checks ensuring your `arduino-cli` binary and Agentic setup are operational.
 * ⚡ **One-Click `arduino-cli` Setup:** Automatic system detection or single-click automated download & installation of the official `arduino-cli` binary.
 * 🧠 **Smart Library Auto-Resolver:** Automatically catches missing `#include <Library.h>` headers during compilation, searches the official Arduino registry, installs missing libraries, and recompiles.
@@ -83,32 +96,21 @@ Thruster features built-in presets and automatic toolchain downloads for popular
 1. Open your project folder in **Antigravity IDE** or **VS Code**.
 2. Click **Initialize Project** `$(rocket)` in the top-right toolbar (or press `Cmd+Shift+P` / `Ctrl+Shift+P` -> `Thruster: Initialize Project`).
 3. Select your target board, USB port, and baud rate.
-4. When prompted:
-   ```text
-   $(sparkle) Enable Agentic MCU Development (Recommended)
-   ```
-   Select this option to scaffold:
-   - `.agents/skills/mcu-agentic-tdd/SKILL.md` (Antigravity skill)
-   - `.agents/mcp_config.json` (Thruster MCP server)
-   - `.thruster/mcp_server.js` (Zero-dependency stdio server)
-   - `tests.h` (Detachable test harness)
-   - Starter Event-Driven sketch (if no `.ino` exists yet).
+4. Thruster sets up `.vscode/arduino.json` and automatically equips `.agents/skills/` and `.agents/mcp_config.json` in the background—ready for AI pair programming.
 
 ### Step 2: Develop with your AI Agent
 Prompt your AI agent:
-> *"Implement a button debounce handler and state machine that transitions to ACTIVE when the button is pressed, and test it via Serial using Thruster MCP tools."*
+> *"Implement a battery voltage to PWM calculation function with low-voltage cutoff, add unit test assertions under #ifdef UNIT_TEST_MODE, and verify it via Serial using Thruster MCP tools."*
 
 Your agent will:
-1. Write test cases in `tests.h`.
-2. Implement event handlers in your `.ino` sketch.
-3. Call `compile_sketch` to verify compilation and inspect memory usage.
-4. Call `flash_sketch` to upload to the microcontroller.
-5. Call `run_serial_test` to trigger assertions over Serial and verify they pass.
+1. Write the function and its `#ifdef UNIT_TEST_MODE` test block.
+2. Call `compile_sketch` with `test_mode: true` to compile with `-DUNIT_TEST_MODE=1`.
+3. Call `flash_sketch` to upload to the microcontroller.
+4. Call `run_serial_test` to verify `[PASS]` assertion output over Serial.
 
 ### Step 3: Production Release Deploy
 Once your firmware is verified:
-1. Comment out `#define THRUSTER_TEST_MODE 1` in your sketch.
-2. Hit **Flash** `$(zap)`. Thruster uploads a 100% clean, optimal production binary with zero test strings or overhead!
+* Hitting **Flash** `$(zap)` in the editor compiles and flashes standard production firmware without `UNIT_TEST_MODE`—100% clean, optimal binary with zero test strings or overhead!
 
 ---
 
@@ -117,7 +119,7 @@ Once your firmware is verified:
 Access the unified dashboard via the **`Settings`** `$(gear)` icon in the top-right toolbar:
 
 * **📋 Step 1 — Valid `arduino-cli` binary:** Live verification of your compiler backend with 1-click auto-install.
-* **📋 Step 2 — Agentic MCU Development:** Live check showing whether Antigravity Skill, MCP Server, and `tests.h` are configured.
+* **📋 Step 2 — Agentic MCU Development:** Live check showing whether Antigravity Skill and MCP Server are active.
 * **🧠 Smart Library Auto-Resolver:** Configure resolver behavior (`Auto`, `With warning`, or `Off`).
 * **📁 Retention Logs:** Inspect or clear the latest 10 flash logs and crash logs.
 * **🎯 Target Hardware:** Switch boards and ports on the fly.
