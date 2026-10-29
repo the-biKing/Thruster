@@ -1,8 +1,8 @@
 {
   "name": "thruster",
   "displayName": "Thruster",
-  "description": "One-click compile, flash, and serial monitor for ESP32, Arduino, RP2040, and other microcontrollers with smart library auto-resolver in Antigravity IDE and VS Code.",
-  "version": "0.2.0",
+  "description": "Agent-driven MCU development platform for ESP32, Arduino, RP2040, and STM32. Features Event-Driven Architecture (EDA), detachable Test-Driven Design (TDD) via Serial, MCP Server, and one-click compile & flash.",
+  "version": "1.0.0",
   "publisher": "the-biKing",
   "license": "MIT",
   "repository": {
@@ -23,6 +23,10 @@
   ],
   "keywords": [
     "thruster",
+    "agentic",
+    "mcp",
+    "tdd",
+    "event-driven",
     "esp32",
     "nodemcu",
     "arduino",
@@ -40,6 +44,7 @@
     "onLanguage:arduino",
     "workspaceContains:**/*.ino",
     "onCommand:thruster.init",
+    "onCommand:thruster.setupAgenticDev",
     "onCommand:thruster.flash",
     "onCommand:thruster.flashAndMonitor",
     "onCommand:thruster.compile",
@@ -57,6 +62,12 @@
         "command": "thruster.init",
         "title": "Thruster: Initialize Project",
         "icon": "$(rocket)",
+        "enablement": "!thruster.isBusy"
+      },
+      {
+        "command": "thruster.setupAgenticDev",
+        "title": "Thruster: Setup Agentic MCU Development (Skills & MCP)",
+        "icon": "$(sparkle)",
         "enablement": "!thruster.isBusy"
       },
       {

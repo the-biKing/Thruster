@@ -58,6 +58,10 @@ def build():
   <Default Extension="js" ContentType="application/javascript" />
   <Default Extension="png" ContentType="image/png" />
   <Default Extension="txt" ContentType="text/plain" />
+  <Default Extension="py" ContentType="text/plain" />
+  <Default Extension="ps1" ContentType="text/plain" />
+  <Default Extension="h" ContentType="text/plain" />
+  <Default Extension="ino" ContentType="text/plain" />
   <Default Extension="" ContentType="text/plain" />
 </Types>
 '''
@@ -78,9 +82,18 @@ def build():
         ('README.md', 'extension/README.md'),
         ('LICENSE', 'extension/LICENSE'),
         ('Thruster.png', 'extension/Thruster.png'),
-        ('scripts/flash_runner.py', 'extension/scripts/flash_runner.py'),
-        ('scripts/flash_runner.ps1', 'extension/scripts/flash_runner.ps1'),
     ]
+
+    for folder in ['scripts', 'templates']:
+        if os.path.exists(folder):
+            for root_dir, _, filenames in os.walk(folder):
+                for fn in filenames:
+                    if fn.startswith('.'):
+                        continue
+                    src = os.path.join(root_dir, fn)
+                    rel = os.path.relpath(src, '.')
+                    arc = f"extension/{rel.replace(os.sep, '/')}"
+                    files_to_pack.append((src, arc))
 
     with zipfile.ZipFile(output_filename, 'w', compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr('[Content_Types].xml', content_types.strip())

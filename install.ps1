@@ -12,7 +12,9 @@ param(
 )
 
 $sourceDir = $PSScriptRoot
-$extDirName = "the-biking.thruster-0.2.0-universal"
+$pkgJson = Get-Content "$sourceDir\package.json" -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+$version = if ($pkgJson.version) { $pkgJson.version } else { "1.0.0" }
+$extDirName = "the-biking.thruster-$version-universal"
 
 $baseExtDirs = @(
     "$env:USERPROFILE\.antigravity-ide\extensions",
@@ -21,7 +23,7 @@ $baseExtDirs = @(
 )
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " Installing Thruster Extension (v0.2.0)" -ForegroundColor Cyan
+Write-Host " Installing Thruster Extension (v$version)" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
 foreach ($base in $baseExtDirs) {
@@ -57,6 +59,9 @@ foreach ($base in $baseExtDirs) {
                 if (Test-Path "$sourceDir\scripts") {
                     Copy-Item -Path "$sourceDir\scripts" -Destination $target -Recurse -Force
                 }
+                if (Test-Path "$sourceDir\templates") {
+                    Copy-Item -Path "$sourceDir\templates" -Destination $target -Recurse -Force
+                }
                 Write-Host " [COPIED] $target" -ForegroundColor Green
             } else {
                 try {
@@ -67,6 +72,9 @@ foreach ($base in $baseExtDirs) {
                     Copy-Item -Path "$sourceDir\package.json", "$sourceDir\extension.js", "$sourceDir\README.md", "$sourceDir\Thruster.png", "$sourceDir\LICENSE" -Destination $target -Force
                     if (Test-Path "$sourceDir\scripts") {
                         Copy-Item -Path "$sourceDir\scripts" -Destination $target -Recurse -Force
+                    }
+                    if (Test-Path "$sourceDir\templates") {
+                        Copy-Item -Path "$sourceDir\templates" -Destination $target -Recurse -Force
                     }
                     Write-Host " [COPIED (Fallback)] $target" -ForegroundColor Yellow
                 }

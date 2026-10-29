@@ -4,7 +4,11 @@
 set -e
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXT_DIR_NAME="the-biking.thruster-0.2.0-universal"
+VERSION=$(grep '"version"' "$SOURCE_DIR/package.json" | head -n 1 | awk -F '"' '{print $4}')
+if [ -z "$VERSION" ]; then
+    VERSION="1.0.0"
+fi
+EXT_DIR_NAME="the-biking.thruster-${VERSION}-universal"
 
 TARGET_DIRS=(
     "$HOME/.antigravity-ide/extensions"
@@ -13,14 +17,15 @@ TARGET_DIRS=(
 )
 
 echo "=========================================="
-echo " Installing Thruster Extension (v0.2.0)"
+echo " Installing Thruster Extension (v${VERSION})"
 echo "=========================================="
 
 for base in "${TARGET_DIRS[@]}"; do
     if [ -d "$base" ]; then
+        # Remove any older version folders
+        rm -rf "$base"/the-biking.thruster-*-universal
         target="$base/$EXT_DIR_NAME"
         echo " Updating: $target"
-        rm -rf "$target"
         mkdir -p "$target"
         cp "$SOURCE_DIR/package.json" "$target/"
         cp "$SOURCE_DIR/extension.js" "$target/"
@@ -29,6 +34,9 @@ for base in "${TARGET_DIRS[@]}"; do
         cp "$SOURCE_DIR/LICENSE" "$target/"
         if [ -d "$SOURCE_DIR/scripts" ]; then
             cp -r "$SOURCE_DIR/scripts" "$target/"
+        fi
+        if [ -d "$SOURCE_DIR/templates" ]; then
+            cp -r "$SOURCE_DIR/templates" "$target/"
         fi
         echo " [COPIED] $target"
     fi

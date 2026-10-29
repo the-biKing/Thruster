@@ -440,6 +440,128 @@ async function ensureArduinoCli(promptIfMissing = true) {
     return null;
 }
 
+function copyDirRecursive(srcDir, destDir) {
+    if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+    }
+    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+    for (const entry of entries) {
+        const srcPath = path.join(srcDir, entry.name);
+        const destPath = path.join(destDir, entry.name);
+        if (entry.isDirectory()) {
+            copyDirRecursive(srcPath, destPath);
+        } else {
+            fs.copyFileSync(srcPath, destPath);
+        }
+    }
+}
+
+async function setupAgenticDevelopment(context, root, verbose = true) {
+    if (!root) {
+        vscode.window.showErrorMessage("Thruster: Please open a workspace folder first.");
+        return false;
+    }
+
+    const extPath = context.extensionPath || __dirname;
+    const templatesDir = fs.existsSync(path.join(extPath, 'templates'))
+        ? path.join(extPath, 'templates')
+        : path.join(__dirname, 'templates');
+    const scriptsDir = fs.existsSync(path.join(extPath, 'scripts'))
+        ? path.join(extPath, 'scripts')
+        : path.join(__dirname, 'scripts');
+
+    try {
+        // 1. Scaffold .agents/skills/mcu-agentic-tdd/
+        const targetSkillDir = path.join(root, '.agents', 'skills', 'mcu-agentic-tdd');
+        const sourceSkillDir = path.join(templatesDir, 'skills', 'mcu-agentic-tdd');
+        if (fs.existsSync(sourceSkillDir)) {
+            copyDirRecursive(sourceSkillDir, targetSkillDir);
+        }
+
+        // 2. Scaffold .thruster/mcp_server.js
+        const thrusterDir = path.join(root, '.thruster');
+        if (!fs.existsSync(thrusterDir)) {
+            fs.mkdirSync(thrusterDir, { recursive: true });
+        }
+        const targetMcpScript = path.join(thrusterDir, 'mcp_server.js');
+        const sourceMcpScript = path.join(scriptsDir, 'mcp_server.js');
+        if (fs.existsSync(sourceMcpScript)) {
+            fs.copyFileSync(sourceMcpScript, targetMcpScript);
+        }
+
+        // 3. Configure .agents/mcp_config.json
+        const agentsDir = path.join(root, '.agents');
+        if (!fs.existsSync(agentsDir)) {
+            fs.mkdirSync(agentsDir, { recursive: true });
+        }
+        const mcpConfigPath = path.join(agentsDir, 'mcp_config.json');
+        let mcpConfig = { mcpServers: {} };
+        if (fs.existsSync(mcpConfigPath)) {
+            try {
+                mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf8')) || { mcpServers: {} };
+                if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
+            } catch (e) {}
+        }
+
+        // Determine runtime command: use 'node' if runnable, else process.execPath with ELECTRON_RUN_AS_NODE
+        const isNodeInPath = checkBinaryRunnable('node');
+        if (isNodeInPath) {
+            mcpConfig.mcpServers.thruster = {
+                command: "node",
+                args: [".thruster/mcp_server.js"]
+            };
+        } else {
+            mcpConfig.mcpServers.thruster = {
+                command: process.execPath,
+                args: [".thruster/mcp_server.js"],
+                env: {
+                    ELECTRON_RUN_AS_NODE: "1"
+                }
+            };
+        }
+        fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf8');
+
+        // 4. Scaffold tests.h in active sketch folder or root
+        const sketchDir = getActiveSketchDir() || root;
+        const targetTestsH = path.join(sketchDir, 'tests.h');
+        const sourceTestsH = path.join(templatesDir, 'tests.h');
+        if (!fs.existsSync(targetTestsH) && fs.existsSync(sourceTestsH)) {
+            fs.copyFileSync(sourceTestsH, targetTestsH);
+        }
+
+        // 5. If no .ino sketch exists in workspace, offer to create starter sketch
+        const currentSketchDir = getActiveSketchDir();
+        if (!currentSketchDir) {
+            const choice = await vscode.window.showInformationMessage(
+                "Thruster: No .ino sketch found in workspace. Create a starter Event-Driven sketch (with detachable tests)?",
+                "✨ Create Starter Sketch", "Skip"
+            );
+            if (choice === "✨ Create Starter Sketch") {
+                const folderName = path.basename(root);
+                const sketchFile = path.join(root, `${folderName}.ino`);
+                const sourceSketch = path.join(templatesDir, 'starter_sketch.ino');
+                if (fs.existsSync(sourceSketch)) {
+                    fs.copyFileSync(sourceSketch, sketchFile);
+                    try {
+                        const doc = await vscode.workspace.openTextDocument(sketchFile);
+                        await vscode.window.showTextDocument(doc);
+                    } catch (e) {}
+                }
+            }
+        }
+
+        if (verbose) {
+            vscode.window.showInformationMessage(
+                "Thruster: Agentic MCU Development enabled! Skill added to .agents/skills/ and MCP server registered in .agents/mcp_config.json."
+            );
+        }
+        return true;
+    } catch (err) {
+        vscode.window.showErrorMessage(`Thruster: Failed to setup agentic MCU development: ${err.message}`);
+        return false;
+    }
+}
+
 function scanSerialPorts(cliPath) {
     return new Promise((resolve) => {
         const ports = [];
@@ -1201,12 +1323,23 @@ function getSystemHealthState() {
     const maxFlashLogs = (config && config.maxFlashLogs) || vsConfig.get('maxFlashLogs', 10);
     const maxCrashLogs = (config && config.maxCrashLogs) || vsConfig.get('maxCrashLogs', 10);
 
+    const root = getWorkspaceRoot();
+    const hasSkill = root ? fs.existsSync(path.join(root, '.agents', 'skills', 'mcu-agentic-tdd', 'SKILL.md')) : false;
+    const hasMcp = root ? fs.existsSync(path.join(root, '.agents', 'mcp_config.json')) : false;
+    const hasTestsH = root ? (fs.existsSync(path.join(root, 'tests.h')) || (getActiveSketchDir() && fs.existsSync(path.join(getActiveSketchDir(), 'tests.h')))) : false;
+
     return {
         cli: {
             isValid: isCliValid,
             path: cliPath || '',
             version: cliVersion,
             configuredPath: configuredPath
+        },
+        agentic: {
+            isConfigured: hasSkill && hasMcp,
+            hasSkill,
+            hasMcp,
+            hasTestsH
         },
         settings: {
             resolverMode,
@@ -1550,7 +1683,7 @@ function getSettingsWebviewHtml(state) {
                 </div>
             </div>
             <div class="badges">
-                <span class="badge">v0.2.0</span>
+                <span class="badge">v1.0.0</span>
                 <span class="badge">${osLabel}</span>
             </div>
         </div>
@@ -1607,6 +1740,32 @@ function getSettingsWebviewHtml(state) {
                             <button class="secondary" id="btn-browse-cli">📂 Browse / Select Path...</button>
                             <button class="secondary" id="btn-detect-cli">🔍 Auto-Detect on System</button>
                         `}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Agentic MCU Development -->
+            <div class="checklist-item">
+                <div class="checklist-info">
+                    <div class="checklist-name">
+                        <span>2. Agentic MCU Development (Skills & MCP Server)</span>
+                        ${state.agentic && state.agentic.isConfigured ? `
+                            <span class="status-pill pass">✔ CONFIGURED</span>
+                        ` : `
+                            <span class="status-pill fail" style="background-color: rgba(2, 136, 209, 0.15); color: #0288d1; border-color: rgba(2, 136, 209, 0.4);">○ READY TO SETUP</span>
+                        `}
+                    </div>
+                    <div class="checklist-desc">
+                        Empowers AI agents (Antigravity IDE) to design with Event-Driven Architecture (EDA), execute Test-Driven Design (TDD) via Serial, and run the autonomous compile-flash-test loop.
+                    </div>
+                    <div class="checklist-meta">
+                        <strong>Antigravity Skill:</strong> ${state.agentic && state.agentic.hasSkill ? 'Installed (.agents/skills/mcu-agentic-tdd)' : 'Not installed'}<br>
+                        <strong>Thruster MCP Server:</strong> ${state.agentic && state.agentic.hasMcp ? 'Configured (.agents/mcp_config.json)' : 'Not configured'}<br>
+                        <strong>Detachable tests.h:</strong> ${state.agentic && state.agentic.hasTestsH ? 'Present in sketch' : 'Not generated'}
+                    </div>
+
+                    <div class="actions-row">
+                        <button id="btn-setup-agentic">✨ ${state.agentic && state.agentic.isConfigured ? 'Re-generate / Update Agentic Setup' : 'One-Click Agentic Setup'}</button>
                     </div>
                 </div>
             </div>
@@ -1749,6 +1908,10 @@ function getSettingsWebviewHtml(state) {
             vscode.postMessage({ command: 'detectCli' });
         });
 
+        document.getElementById('btn-setup-agentic')?.addEventListener('click', () => {
+            vscode.postMessage({ command: 'setupAgenticDev' });
+        });
+
         document.getElementById('btn-save-path')?.addEventListener('click', () => {
             const val = document.getElementById('cli-path-input').value;
             vscode.postMessage({ command: 'setCliPath', value: val });
@@ -1836,6 +1999,18 @@ function openSettingsPanel(context) {
                     settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
                 }
                 vscode.window.showInformationMessage("Thruster: System readiness checklist refreshed.");
+                break;
+            }
+            case 'setupAgenticDev': {
+                const root = getWorkspaceRoot();
+                if (root) {
+                    await setupAgenticDevelopment(context, root, true);
+                    if (settingsPanel) {
+                        settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
+                    }
+                } else {
+                    vscode.window.showErrorMessage("Thruster: Please open a workspace folder first.");
+                }
                 break;
             }
             case 'installCli': {
@@ -2096,10 +2271,44 @@ function activate(context) {
             arduinoCliPath: cliPath
         });
 
+        // Step 4: Agentic MCU Development Setup (Skills & MCP)
+        const agenticPick = await vscode.window.showQuickPick([
+            {
+                label: "$(sparkle) Enable Agentic MCU Development (Recommended)",
+                description: "Scaffold Antigravity Skills (.agents/skills/), Thruster MCP, and detachable tests.h",
+                enable: true
+            },
+            {
+                label: "$(dash) Skip Agentic Setup",
+                description: "Standard configuration only (board, port, baud rate)",
+                enable: false
+            }
+        ], {
+            placeHolder: "Thruster v1.0.0: Enable AI Agentic MCU Development (Skills & MCP)?",
+            ignoreFocusOut: true
+        });
+
+        if (agenticPick && agenticPick.enable) {
+            await setupAgenticDevelopment(context, root);
+        }
+
         ensureCppProperties(root);
         updateState();
 
         vscode.window.showInformationMessage(`Thruster initialized for ${boardInfo.boardName}! Toolbar buttons are now ready.`);
+    }));
+
+    // Setup Agentic MCU Development Standalone Command
+    context.subscriptions.push(vscode.commands.registerCommand('thruster.setupAgenticDev', async () => {
+        const root = getWorkspaceRoot();
+        if (!root) {
+            vscode.window.showErrorMessage("Thruster: Please open a workspace folder first.");
+            return;
+        }
+        await setupAgenticDevelopment(context, root, true);
+        if (settingsPanel) {
+            settingsPanel.webview.html = getSettingsWebviewHtml(getSystemHealthState());
+        }
     }));
 
     // Compile Command (with Smart Library Resolver & Busy Lock)
