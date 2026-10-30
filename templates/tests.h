@@ -171,6 +171,7 @@ namespace ThrusterTestHarness {
         Serial.print(F(", failed="));
         Serial.println(_thruster_test_failed);
         Serial.println(F("=== THRUSTER TEST RUNNER FINISHED ==="));
+        Serial.flush();
     }
 
     // Weak hook for event injection by agent over Serial
@@ -183,7 +184,7 @@ namespace ThrusterTestHarness {
     inline void parse_command(const char* cmd) {
         if (strcmp(cmd, "CMD:PING") == 0) {
             Serial.println(F("[THRUSTER:PONG]"));
-        } else if (strcmp(cmd, "CMD:TEST:ALL") == 0) {
+        } else if (strcmp(cmd, "CMD:TEST:ALL") == 0 || strcmp(cmd, "START_TEST") == 0) {
             run_all_tests();
         } else if (strncmp(cmd, "CMD:TEST:", 9) == 0) {
             const char* targetName = cmd + 9;
@@ -257,6 +258,12 @@ bool _thruster_current_test_failed = false;
 #define thruster_run_all_tests() \
     ThrusterTestHarness::run_all_tests()
 
+#define thruster_halt_after_tests() \
+    do { \
+        Serial.flush(); \
+        while (true) { delay(100); } \
+    } while (0)
+
 #endif // __cplusplus
 
 #else
@@ -276,6 +283,7 @@ bool _thruster_current_test_failed = false;
 #define thruster_test_init()                   ((void)0)
 #define thruster_test_poll_serial()            ((void)0)
 #define thruster_run_all_tests()               ((void)0)
+#define thruster_halt_after_tests()            ((void)0)
 
 #endif // THRUSTER_TEST_MODE
 #endif // THRUSTER_TESTS_H

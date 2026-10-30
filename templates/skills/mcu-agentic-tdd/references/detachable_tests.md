@@ -11,10 +11,10 @@ All test definitions, assertion checks, and serial test prints are isolated insi
 ```cpp
 #ifdef UNIT_TEST_MODE
 void run_tests() {
-    Serial.println("=== UNIT TESTS START ===");
-    bool ok1 = (sensor_scale_value(512) == 50);
-    Serial.println(ok1 ? "[PASS] Half scale" : "[FAIL] Half scale");
-    Serial.println("=== UNIT TESTS END ===");
+    Serial.println(F("=== UNIT TESTS START ==="));
+    bool ok1 = (clamp_and_scale(500, 1000, 4000, 255) == 0);
+    Serial.println(ok1 ? F("[PASS] Below min clamps to 0") : F("[FAIL] Below min clamps to 0"));
+    Serial.println(F("=== UNIT TESTS END ==="));
 }
 #endif
 ```
@@ -24,9 +24,15 @@ void run_tests() {
 ### 1. Test Mode (Autonomous Agent Verification)
 When Thruster MCP calls `compile_sketch` with `test_mode: true`, it automatically passes:
 ```bash
---build-property "build.extra_flags=-DUNIT_TEST_MODE=1"
+--build-property "compiler.cpp.extra_flags=-DUNIT_TEST_MODE=1 -DTHRUSTER_TEST_MODE=1"
 ```
-The compiler includes the test routines. Upon upload, the MCU executes the tests in `setup()` and prints `[PASS]` or `[FAIL]` tokens over Serial for the AI agent to verify.
+*(Using `compiler.cpp.extra_flags` instead of `build.extra_flags` prevents accidental clobbering of core platform flags on ESP32, RP2040, and STM32).*
+
+The compiler includes the test routines. Upon upload:
+1. The MCU boots into `setup()`.
+2. It waits for the `START_TEST` serial handshake from Thruster MCP (eliminating boot-vs-monitor race conditions).
+3. It prints `[PASS]` or `[FAIL]` tokens over Serial.
+4. It calls `Serial.flush()` and halts in `while (true) { delay(100); }` so real actuators and production `loop()` code never execute during testing.
 
 ### 2. Production Release Deploy
 When compiling without `test_mode` (the default for normal builds):
@@ -39,6 +45,7 @@ When compiling without `test_mode` (the default for normal builds):
 
 | Component | Test Mode (`UNIT_TEST_MODE=1`) | Production Release Mode |
 | :--- | :--- | :--- |
-| Test Strings (`"[PASS]..."`) | Stored in Flash | **0 bytes (completely removed)** |
+| Test Strings (`"[PASS]..."`) | Stored in Flash / PROGMEM | **0 bytes (completely removed)** |
 | Test Helper Functions | Compiled in Flash | **0 bytes (stripped by preprocessor)** |
-| Serial Test Overhead | Transmitted once at boot | **0 bytes / 0 cycles** |
+| Serial Test Overhead | Transmitted once during test | **0 bytes / 0 cycles** |
+| Hardware Actuator Fallthrough | Prevented via idle halt loop | **Normal execution in `loop()`** |

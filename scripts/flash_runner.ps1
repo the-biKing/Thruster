@@ -71,6 +71,39 @@ function Render-ProgressBar([int]$pct, [double]$elapsedSec, [string]$status = ""
     [Console]::Write($msg)
 }
 
+function Ensure-GitIgnore($wsDir) {
+    if (-not $wsDir) { return }
+    $gitDir = Join-Path $wsDir ".git"
+    if (-not (Test-Path $gitDir)) { return }
+
+    $gitignorePath = Join-Path $wsDir ".gitignore"
+    $existing = ""
+    if (Test-Path $gitignorePath) {
+        try { $existing = Get-Content -Path $gitignorePath -Raw -ErrorAction SilentlyContinue } catch { }
+    }
+    if ($null -eq $existing) { $existing = "" }
+
+    $lines = $existing -split "`r?`n" | ForEach-Object { $_.Trim() }
+    if ($lines -contains ".thruster" -or $lines -contains ".thruster/") { return }
+
+    $entriesToAdd = @()
+    if (-not ($lines -contains ".thruster/logs" -or $lines -contains ".thruster/logs/")) {
+        $entriesToAdd += ".thruster/logs/"
+    }
+    if (-not ($lines -contains ".thruster/crashes" -or $lines -contains ".thruster/crashes/")) {
+        $entriesToAdd += ".thruster/crashes/"
+    }
+
+    if ($entriesToAdd.Count -gt 0) {
+        $toAppend = ""
+        if ($existing.Length -gt 0 -and -not $existing.EndsWith("`n") -and -not $existing.EndsWith("`r`n")) {
+            $toAppend += "`n"
+        }
+        $toAppend += "# Thruster logs`n" + ($entriesToAdd -join "`n") + "`n"
+        Add-Content -Path $gitignorePath -Value $toAppend -NoNewline -Encoding UTF8
+    }
+}
+
 function Prune-Logs([string]$dir, [int]$maxCount) {
     if (-not (Test-Path $dir)) { return }
     $files = Get-ChildItem -Path $dir -Filter "*.log" | Sort-Object LastWriteTime -Descending
@@ -161,6 +194,8 @@ $crashesDir = Join-Path $thrusterDir "crashes"
 
 if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
 if (-not (Test-Path $crashesDir)) { New-Item -ItemType Directory -Path $crashesDir -Force | Out-Null }
+
+Ensure-GitIgnore $workspaceDir
 
 $timestamp = (Get-Date).ToString("yyyy-MM-dd_HH-mm-ss")
 $fullOutputText = $allOutput -join "`n"

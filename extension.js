@@ -52,35 +52,142 @@ const KNOWN_CORE_INDEX_URLS = {
 };
 
 const BUILTIN_HEADERS = new Set([
+    // C / C++ standard library
     'stdio', 'stdlib', 'stdint', 'stdbool', 'stddef', 'math', 'string', 'time',
     'vector', 'map', 'set', 'string_view', 'algorithm', 'memory', 'utility',
-    'iostream', 'sstream', 'fstream', 'cstddef', 'cstdint', 'cstring', 'cmath'
+    'iostream', 'sstream', 'fstream', 'cstddef', 'cstdint', 'cstring', 'cmath',
+    'cassert', 'cctype', 'cerrno', 'cfloat', 'climits', 'clocale', 'csetjmp',
+    'csignal', 'cstdarg', 'cstdio', 'cstdlib', 'ctime', 'cwchar', 'cwctype',
+    'new', 'typeinfo', 'exception', 'stdexcept', 'functional', 'tuple', 'array',
+    'initializer_list', 'chrono', 'atomic', 'bitset', 'limits',
+
+    // Core Arduino Framework & Architecture built-ins
+    'arduino', 'wire', 'spi', 'eeprom', 'softwareserial', 'software_serial',
+    'hid', 'keyboard', 'mouse', 'sd', 'fs', 'spiffs', 'littlefs', 'ffat',
+    'wifi', 'wificlient', 'wifiserver', 'wifistatussniffer', 'wifiudp',
+    'bluetoothserial', 'bledevice', 'bleserver', 'bleclient', 'bleutils',
+    'ble2902', 'ticker', 'freertos', 'freertos/freertos', 'freertos/task',
+    'esp_system', 'esp_err', 'esp_log', 'esp_timer', 'esp_sleep', 'esp_camera',
+    'esp_now', 'esp_wifi', 'nvs', 'nvs_flash', 'driver/gpio', 'driver/uart',
+    'driver/i2c', 'driver/spi_master', 'driver/ledc', 'driver/timer',
+    'soc/soc', 'soc/rtc', 'avr/io', 'avr/pgmspace', 'avr/interrupt', 'avr/wdt',
+    'avr/sleep', 'avr/power', 'avr/eeprom', 'pgmspace', 'pins_arduino',
+    'binary', 'wcharacter', 'wstring', 'hardwareserial', 'ipaddress',
+    'server', 'client', 'stream', 'printable', 'tests'
 ]);
 
-function sendTerminalEcho(term, message, color = 'cyan') {
-    if (isWin) {
-        const colorMap = {
-            cyan: 'Cyan',
-            green: 'Green',
-            yellow: 'Yellow',
-            red: 'Red',
-            magenta: 'Magenta',
-            white: 'White'
+class ThrusterTerminal {
+    constructor() {
+        this.writeEmitter = new vscode.EventEmitter();
+        this.closeEmitter = new vscode.EventEmitter();
+        this.pty = {
+            onDidWrite: this.writeEmitter.event,
+            onDidClose: this.closeEmitter.event,
+            open: () => {},
+            close: () => {
+                this.handleClose();
+            },
+            handleInput: (data) => {
+                this.handleInput(data);
+            }
         };
-        const fg = colorMap[color] || 'Cyan';
-        term.sendText(`Write-Host "${message}" -ForegroundColor ${fg}`);
-    } else {
-        const ansiMap = {
-            cyan: '\\033[1;36m',
-            green: '\\033[1;32m',
-            yellow: '\\033[1;33m',
-            red: '\\033[1;31m',
-            magenta: '\\033[1;35m',
-            white: '\\033[1;37m'
-        };
-        const ansi = ansiMap[color] || '\\033[1;36m';
-        term.sendText(`printf "${ansi}%s\\033[0m\\n" "${message}"`);
+        this.terminal = null;
+        this.activeProcess = null;
     }
+
+    getTerminal() {
+        if (!this.terminal || this.terminal.exitStatus !== undefined) {
+            this.terminal = vscode.window.createTerminal({
+                name: "Thruster",
+                pty: this.pty
+            });
+        }
+        return this.terminal;
+    }
+
+    show(preserveFocus = false) {
+        this.getTerminal().show(preserveFocus);
+    }
+
+    write(text) {
+        if (!text) return;
+        const normalized = text.replace(/(?<!\r)\n/g, '\r\n');
+        this.writeEmitter.fire(normalized);
+    }
+
+    writeLine(line = '') {
+        this.write(line + '\r\n');
+    }
+
+    echo(message, color = 'cyan') {
+        const ansiMap = {
+            cyan: '\x1b[1;36m',
+            green: '\x1b[1;32m',
+            yellow: '\x1b[1;33m',
+            red: '\x1b[1;31m',
+            magenta: '\x1b[1;35m',
+            white: '\x1b[1;37m',
+            dim: '\x1b[2;37m'
+        };
+        const prefix = ansiMap[color] || '\x1b[1;36m';
+        this.writeLine(`${prefix}${message}\x1b[0m`);
+    }
+
+    handleInput(data) {
+        // Ctrl+C (ASCII 3)
+        if (data === '\x03') {
+            if (this.activeProcess) {
+                try {
+                    if (isWin) {
+                        cp.exec(`taskkill /pid ${this.activeProcess.pid} /T /F`);
+                    } else {
+                        this.activeProcess.kill('SIGINT');
+                    }
+                } catch (e) {}
+                this.activeProcess = null;
+                this.echo('\r\n[Process cancelled by user (Ctrl+C)]', 'yellow');
+            }
+            if (isMonitoring) {
+                isMonitoring = false;
+                updateState();
+            }
+            return;
+        }
+
+        // Pass keystrokes to active process (e.g. Serial Monitor)
+        if (this.activeProcess && this.activeProcess.stdin && this.activeProcess.stdin.writable) {
+            this.activeProcess.stdin.write(data);
+        }
+    }
+
+    handleClose() {
+        if (this.activeProcess) {
+            try {
+                if (isWin) cp.exec(`taskkill /pid ${this.activeProcess.pid} /T /F`);
+                else this.activeProcess.kill('SIGKILL');
+            } catch (e) {}
+            this.activeProcess = null;
+        }
+        this.terminal = null;
+    }
+
+    dispose() {
+        this.handleClose();
+        if (this.terminal) {
+            this.terminal.dispose();
+            this.terminal = null;
+        }
+    }
+}
+
+const thrusterTerminal = new ThrusterTerminal();
+
+function sendTerminalEcho(term, message, color = 'cyan') {
+    thrusterTerminal.echo(message, color);
+}
+
+function getTerminal() {
+    return thrusterTerminal.getTerminal();
 }
 
 function formatCliCmd(cliPath, args) {
@@ -126,6 +233,54 @@ function saveConfig(data) {
     const merged = Object.assign({}, current, data);
     fs.writeFileSync(getConfigPath(), JSON.stringify(merged, null, 2), 'utf8');
     return true;
+}
+
+function ensureGitIgnoreForLogs(workspaceDir) {
+    const root = workspaceDir || getWorkspaceRoot();
+    if (!root) return false;
+
+    const gitDir = path.join(root, '.git');
+    if (!fs.existsSync(gitDir)) {
+        return false;
+    }
+
+    const gitignorePath = path.join(root, '.gitignore');
+    let existing = '';
+    if (fs.existsSync(gitignorePath)) {
+        try {
+            existing = fs.readFileSync(gitignorePath, 'utf8');
+        } catch (e) {
+            existing = '';
+        }
+    }
+
+    const lines = existing.split(/\r?\n/).map(l => l.trim());
+    if (lines.includes('.thruster') || lines.includes('.thruster/')) {
+        return false;
+    }
+
+    const entriesToAdd = [];
+    if (!lines.includes('.thruster/logs') && !lines.includes('.thruster/logs/')) {
+        entriesToAdd.push('.thruster/logs/');
+    }
+    if (!lines.includes('.thruster/crashes') && !lines.includes('.thruster/crashes/')) {
+        entriesToAdd.push('.thruster/crashes/');
+    }
+
+    if (entriesToAdd.length > 0) {
+        try {
+            let toAppend = '';
+            if (existing && !existing.endsWith('\n')) {
+                toAppend += '\n';
+            }
+            toAppend += '# Thruster logs\n' + entriesToAdd.join('\n') + '\n';
+            fs.writeFileSync(gitignorePath, existing + toAppend, 'utf8');
+            return true;
+        } catch (e) {
+            console.error('Thruster: Failed to update .gitignore', e);
+        }
+    }
+    return false;
 }
 
 function checkBinaryRunnable(binaryPath) {
@@ -669,12 +824,7 @@ function getActiveSketchDir() {
     return null;
 }
 
-function getTerminal() {
-    if (!terminalInstance || terminalInstance.exitStatus !== undefined) {
-        terminalInstance = vscode.window.createTerminal("Thruster");
-    }
-    return terminalInstance;
-}
+// getTerminal() handled by thrusterTerminal
 
 function ensureCppProperties(root) {
     const propPath = path.join(root, '.vscode', 'c_cpp_properties.json');
@@ -752,23 +902,41 @@ async function ensureCoreInstalled(fqbn, cliPath) {
     const additionalUrl = KNOWN_CORE_INDEX_URLS[coreId] || '';
     const urlArgs = additionalUrl ? ` --additional-urls "${additionalUrl}"` : '';
 
-    const term = getTerminal();
-    term.show(true);
-    sendTerminalEcho(term, `=== Thruster: Core package '${coreId}' is not yet installed ===`, 'yellow');
-    sendTerminalEcho(term, `=== Auto-downloading and installing '${coreId}' via arduino-cli... ===`, 'cyan');
+    thrusterTerminal.show(true);
+    thrusterTerminal.echo(`=== Thruster: Core package '${coreId}' is not yet installed ===`, 'yellow');
+    thrusterTerminal.echo(`=== Auto-downloading and installing '${coreId}' via arduino-cli... ===`, 'cyan');
 
     if (additionalUrl) {
-        term.sendText(formatCliCmd(cliPath, `core update-index${urlArgs}`));
+        thrusterTerminal.echo(`Updating core index for ${coreId}...`, 'cyan');
+        await new Promise((res) => {
+            const p = cp.spawn(cliPath, ['core', 'update-index', '--additional-urls', additionalUrl], { shell: isWin, env: process.env });
+            thrusterTerminal.activeProcess = p;
+            p.stdout.on('data', d => thrusterTerminal.write(d.toString()));
+            p.stderr.on('data', d => thrusterTerminal.write(d.toString()));
+            p.on('close', () => { thrusterTerminal.activeProcess = null; res(); });
+            p.on('error', () => { thrusterTerminal.activeProcess = null; res(); });
+        });
     }
 
-    if (isWin) {
-        term.sendText(`& "${cliPath}" core install ${coreId}${urlArgs}; if ($LASTEXITCODE -eq 0) { Write-Host "=== Core '${coreId}' installed successfully! ===" -ForegroundColor Green }`);
+    const installSuccess = await new Promise((res) => {
+        const args = ['core', 'install', coreId];
+        if (additionalUrl) {
+            args.push('--additional-urls', additionalUrl);
+        }
+        const p = cp.spawn(cliPath, args, { shell: isWin, env: process.env });
+        thrusterTerminal.activeProcess = p;
+        p.stdout.on('data', d => thrusterTerminal.write(d.toString()));
+        p.stderr.on('data', d => thrusterTerminal.write(d.toString()));
+        p.on('close', code => { thrusterTerminal.activeProcess = null; res(code === 0); });
+        p.on('error', () => { thrusterTerminal.activeProcess = null; res(false); });
+    });
+
+    if (installSuccess) {
+        thrusterTerminal.echo(`=== Core '${coreId}' installed successfully! ===`, 'green');
     } else {
-        term.sendText(`"${cliPath}" core install ${coreId}${urlArgs} && printf "\\033[1;32m=== Core '${coreId}' installed successfully! ===\\033[0m\\n"`);
+        thrusterTerminal.echo(`=== Core '${coreId}' installation failed ===`, 'red');
     }
-
-    vscode.window.showInformationMessage(`Thruster: Installing the missing '${coreId}' core package in the terminal.`);
-    return true;
+    return installSuccess;
 }
 
 function getAllInstalledBoards(cliPath) {
@@ -1036,6 +1204,64 @@ function findMissingHeader(text) {
     return null;
 }
 
+function collectSketchHeaders(sketchDir) {
+    const headers = new Set();
+    let files = [];
+    try {
+        files = fs.readdirSync(sketchDir).filter(f => 
+            f.endsWith('.ino') || f.endsWith('.cpp') || f.endsWith('.c') || f.endsWith('.h') || f.endsWith('.hpp')
+        );
+    } catch (e) {
+        return headers;
+    }
+
+    for (const f of files) {
+        try {
+            const content = fs.readFileSync(path.join(sketchDir, f), 'utf8');
+            const lines = content.split(/\r?\n/);
+            for (const l of lines) {
+                const match = l.match(/^\s*#\s*include\s*[<"]\s*([a-zA-Z0-9_\-\/\.]+)\.h\s*[>"]/);
+                if (match && match[1]) {
+                    const fullH = match[1];
+                    const baseH = path.basename(fullH);
+                    
+                    if (fs.existsSync(path.join(sketchDir, baseH + '.h')) || 
+                        fs.existsSync(path.join(sketchDir, fullH + '.h'))) {
+                        continue;
+                    }
+                    
+                    if (!BUILTIN_HEADERS.has(baseH.toLowerCase()) && !BUILTIN_HEADERS.has(fullH.toLowerCase())) {
+                        headers.add(baseH);
+                    }
+                }
+            }
+        } catch (e) {}
+    }
+    return headers;
+}
+
+function getInstalledLibraryNames(cliPath) {
+    return new Promise((resolve) => {
+        cp.exec(`"${cliPath}" lib list --format json`, { encoding: 'utf8', timeout: 15000 }, (err, stdout) => {
+            if (err || !stdout) return resolve(new Set());
+            try {
+                const parsed = JSON.parse(stdout);
+                const installed = new Set();
+                const list = parsed.installed_libraries || parsed.libraries || [];
+                for (const item of list) {
+                    const lib = item.library || item;
+                    if (lib && lib.name) {
+                        installed.add(lib.name.toLowerCase());
+                    }
+                }
+                resolve(installed);
+            } catch (e) {
+                resolve(new Set());
+            }
+        });
+    });
+}
+
 function searchLibrary(header, cliPath) {
     return new Promise((resolve) => {
         cp.exec(`"${cliPath}" lib search "${header}" --format json`, { encoding: 'utf8', timeout: 25000 }, (err, stdout) => {
@@ -1058,138 +1284,206 @@ function searchLibrary(header, cliPath) {
     });
 }
 
-function installLibraryAsync(libName, cliPath, term) {
+function runBatchInstall(cliPath, libs) {
     return new Promise((resolve) => {
-        sendTerminalEcho(term, `=== Installing '${libName}' via arduino-cli... ===`, 'magenta');
-        cp.exec(`"${cliPath}" lib install "${libName}"`, { encoding: 'utf8', timeout: 90000 }, (err) => {
-            if (!err) {
-                sendTerminalEcho(term, `=== Successfully installed '${libName}'! ===`, 'green');
-                resolve(true);
-            } else {
-                sendTerminalEcho(term, `=== Failed to install '${libName}': ${err.message} ===`, 'red');
-                resolve(false);
+        const args = ['lib', 'install', ...libs, '--install-dependencies'];
+        const proc = cp.spawn(cliPath, args, {
+            shell: isWin,
+            env: process.env
+        });
+        thrusterTerminal.activeProcess = proc;
+
+        proc.stdout.on('data', (d) => {
+            thrusterTerminal.write(d.toString());
+        });
+        proc.stderr.on('data', (d) => {
+            thrusterTerminal.write(d.toString());
+        });
+
+        proc.on('close', (code) => {
+            if (thrusterTerminal.activeProcess === proc) {
+                thrusterTerminal.activeProcess = null;
             }
+            resolve(code === 0);
+        });
+
+        proc.on('error', (err) => {
+            if (thrusterTerminal.activeProcess === proc) {
+                thrusterTerminal.activeProcess = null;
+            }
+            thrusterTerminal.echo(`Installation process error: ${err.message}`, 'red');
+            resolve(false);
         });
     });
 }
 
-async function compileWithSmartResolver(sketchDir, fqbn, cliPath, term) {
-    const resolverMode = getSmartLibraryResolverMode();
-    const maxRetries = (resolverMode === 'off') ? 1 : 6;
-    let attempt = 0;
-    const installedInThisRun = new Set();
+function runCompile(sketchDir, fqbn, cliPath) {
+    return new Promise((resolve) => {
+        const proc = cp.spawn(cliPath, ['compile', '--fqbn', fqbn, sketchDir], {
+            shell: isWin,
+            env: process.env
+        });
+        thrusterTerminal.activeProcess = proc;
+        let output = '';
 
-    term.show(true);
+        proc.stdout.on('data', (d) => {
+            output += d.toString();
+        });
+        proc.stderr.on('data', (d) => {
+            output += d.toString();
+        });
 
-    while (attempt < maxRetries) {
-        attempt++;
-        sendTerminalEcho(term, `=== Thruster: Compiling Sketch... ===`, 'cyan');
-
-        const result = await new Promise((resolve) => {
-            cp.exec(`"${cliPath}" compile --fqbn ${fqbn} "${sketchDir}"`, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-                resolve({
-                    success: !err,
-                    output: (stdout || '') + '\n' + (stderr || '')
-                });
+        proc.on('close', (code) => {
+            if (thrusterTerminal.activeProcess === proc) {
+                thrusterTerminal.activeProcess = null;
+            }
+            resolve({
+                success: code === 0,
+                output: output
             });
         });
 
-        if (result.success) {
-            sendTerminalEcho(term, `=== Thruster: Compilation Successful! ===`, 'green');
-            const memory = parseMemoryUsage(result.output);
-            return { success: true, memory, output: result.output };
-        }
-
-        const missingHeader = findMissingHeader(result.output);
-
-        if (!missingHeader || resolverMode === 'off') {
-            term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return null;
-        }
-
-        if (installedInThisRun.has(missingHeader.toLowerCase())) {
-            term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return null;
-        }
-
-        sendTerminalEcho(term, `=== Thruster Smart Resolver: Detected missing header <${missingHeader}.h> ===`, 'yellow');
-
-        const foundLib = await searchLibrary(missingHeader, cliPath);
-        if (!foundLib) {
-            sendTerminalEcho(term, `=== Thruster: No matching library found in registry for <${missingHeader}.h> ===`, 'red');
-            term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return null;
-        }
-
-        if (resolverMode === 'with warning') {
-            const userPick = await vscode.window.showWarningMessage(
-                `Thruster: Missing header <${missingHeader}.h>. Found library "${foundLib}". Install now?`,
-                "Install & Recompile", "Cancel"
-            );
-            if (userPick !== "Install & Recompile") {
-                term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-                return null;
+        proc.on('error', (err) => {
+            if (thrusterTerminal.activeProcess === proc) {
+                thrusterTerminal.activeProcess = null;
             }
-        }
-
-        vscode.window.showInformationMessage(`[Thruster] Auto-installing missing library: "${foundLib}"...`);
-        installedInThisRun.add(missingHeader.toLowerCase());
-
-        const success = await installLibraryAsync(foundLib, cliPath, term);
-        if (!success) {
-            term.sendText(formatCliCmd(cliPath, `compile --fqbn ${fqbn} "${sketchDir}"`));
-            return null;
-        }
-        sendTerminalEcho(term, `=== Installed '${foundLib}'! Recompiling... ===`, 'cyan');
-    }
-
-    return null;
+            resolve({
+                success: false,
+                output: err.message
+            });
+        });
+    });
 }
 
-async function scanAndInstallSketchLibraries(sketchDir, cliPath, term) {
-    term.show(true);
-    sendTerminalEcho(term, `=== Thruster: Scanning Sketch for External Libraries... ===`, 'cyan');
+async function compileWithSmartResolver(sketchDir, fqbn, cliPath) {
+    const resolverMode = getSmartLibraryResolverMode();
+    thrusterTerminal.show(true);
+    thrusterTerminal.echo(`=== Thruster: Compiling Sketch... ===`, 'cyan');
 
-    let files = [];
-    try {
-        files = fs.readdirSync(sketchDir).filter(f => f.endsWith('.ino') || f.endsWith('.cpp') || f.endsWith('.h'));
-    } catch (e) {
-        vscode.window.showErrorMessage("Failed to read sketch directory.");
-        return;
+    // 1. Initial standard compile
+    const result = await runCompile(sketchDir, fqbn, cliPath);
+
+    if (result.success) {
+        thrusterTerminal.echo(`=== Thruster: Compilation Successful! ===`, 'green');
+        const memory = parseMemoryUsage(result.output);
+        return { success: true, memory, output: result.output };
     }
 
-    const headers = new Set();
-    for (const f of files) {
-        try {
-            const content = fs.readFileSync(path.join(sketchDir, f), 'utf8');
-            const lines = content.split(/\r?\n/);
-            for (const l of lines) {
-                const match = l.match(/^\s*#\s*include\s*<([a-zA-Z0-9_\-\.]+)\.h>/);
-                if (match && match[1]) {
-                    const h = match[1];
-                    if (!BUILTIN_HEADERS.has(h.toLowerCase())) {
-                        headers.add(h);
-                    }
-                }
-            }
-        } catch (e) { }
+    // 2. Check if compile failure was due to a missing header
+    const firstMissing = findMissingHeader(result.output);
+    if (!firstMissing || resolverMode === 'off') {
+        thrusterTerminal.echo(`❌ Compilation Failed`, 'red');
+        thrusterTerminal.write(result.output);
+        return null;
     }
 
-    if (headers.size === 0) {
-        vscode.window.showInformationMessage("Thruster: No external library headers (<...>) detected in sketch.");
-        return;
+    thrusterTerminal.echo(`=== Thruster Smart Resolver: Detected missing header <${firstMissing}.h> ===`, 'yellow');
+
+    // 3. Statically scan all sketch files for candidate headers (<5ms)
+    const candidateHeaders = collectSketchHeaders(sketchDir);
+    candidateHeaders.add(firstMissing);
+
+    // 4. Query installed libraries once via CLI
+    const installedLibs = await getInstalledLibraryNames(cliPath);
+
+    // 5. Search & Match missing libraries in registry in parallel
+    const searchPromises = Array.from(candidateHeaders).map(async (header) => {
+        if (installedLibs.has(header.toLowerCase())) return null;
+        const found = await searchLibrary(header, cliPath);
+        if (found && !installedLibs.has(found.toLowerCase())) {
+            return found;
+        }
+        return null;
+    });
+
+    const foundList = await Promise.all(searchPromises);
+    const libsToInstall = Array.from(new Set(foundList.filter(Boolean)));
+
+    if (libsToInstall.length === 0) {
+        thrusterTerminal.echo(`=== Thruster: No matching library found in registry for missing headers ===`, 'red');
+        thrusterTerminal.write(result.output);
+        return null;
     }
 
-    sendTerminalEcho(term, `=== Found ${headers.size} candidate external library headers: ${Array.from(headers).join(', ')} ===`, 'yellow');
-    for (const h of headers) {
-        const found = await searchLibrary(h, cliPath);
-        if (found) {
-            await installLibraryAsync(found, cliPath, term);
-        } else {
-            sendTerminalEcho(term, `=== Could not find registry library for <${h}.h> ===`, 'yellow');
+    // 6. User confirmation if 'with warning' mode
+    if (resolverMode === 'with warning') {
+        const userPick = await vscode.window.showWarningMessage(
+            `Thruster: Detected ${libsToInstall.length} missing libraries (${libsToInstall.join(', ')}). Install all now?`,
+            "Install & Recompile", "Cancel"
+        );
+        if (userPick !== "Install & Recompile") {
+            thrusterTerminal.write(result.output);
+            return null;
         }
     }
-    vscode.window.showInformationMessage("Thruster: Library scan and install complete!");
+
+    // 7. Batch install all missing libraries in ONE CLI command with --install-dependencies
+    thrusterTerminal.echo(`=== Installing ${libsToInstall.length} missing libraries via arduino-cli with dependencies... ===`, 'magenta');
+    thrusterTerminal.echo(`Libraries: ${libsToInstall.join(', ')}`, 'dim');
+
+    const installSuccess = await runBatchInstall(cliPath, libsToInstall);
+    if (!installSuccess) {
+        thrusterTerminal.echo(`=== Thruster: Batch library installation encountered errors ===`, 'red');
+        return null;
+    }
+
+    thrusterTerminal.echo(`=== Successfully installed libraries! Recompiling sketch... ===`, 'cyan');
+
+    // 8. Recompile once
+    const secondResult = await runCompile(sketchDir, fqbn, cliPath);
+    if (secondResult.success) {
+        thrusterTerminal.echo(`=== Thruster: Compilation Successful! ===`, 'green');
+        const memory = parseMemoryUsage(secondResult.output);
+        return { success: true, memory, output: secondResult.output };
+    } else {
+        thrusterTerminal.echo(`❌ Compilation Failed`, 'red');
+        thrusterTerminal.write(secondResult.output);
+        return null;
+    }
+}
+
+async function scanAndInstallSketchLibraries(sketchDir, cliPath) {
+    thrusterTerminal.show(true);
+    thrusterTerminal.echo(`=== Thruster: Scanning Sketch for External Libraries... ===`, 'cyan');
+
+    const candidateHeaders = collectSketchHeaders(sketchDir);
+    if (candidateHeaders.size === 0) {
+        thrusterTerminal.echo("Thruster: No external library headers (<...>) detected in sketch.", "yellow");
+        vscode.window.showInformationMessage("Thruster: No external library headers detected in sketch.");
+        return;
+    }
+
+    thrusterTerminal.echo(`Found ${candidateHeaders.size} candidate external library headers: ${Array.from(candidateHeaders).join(', ')}`, 'dim');
+    const installedLibs = await getInstalledLibraryNames(cliPath);
+
+    const searchPromises = Array.from(candidateHeaders).map(async (header) => {
+        if (installedLibs.has(header.toLowerCase())) return null;
+        const found = await searchLibrary(header, cliPath);
+        if (found && !installedLibs.has(found.toLowerCase())) {
+            return found;
+        }
+        return null;
+    });
+
+    const foundList = await Promise.all(searchPromises);
+    const libsToInstall = Array.from(new Set(foundList.filter(Boolean)));
+
+    if (libsToInstall.length === 0) {
+        thrusterTerminal.echo("Thruster: All candidate libraries are already installed.", "green");
+        vscode.window.showInformationMessage("Thruster: All candidate libraries are already installed.");
+        return;
+    }
+
+    thrusterTerminal.echo(`=== Installing ${libsToInstall.length} libraries via arduino-cli with dependencies... ===`, 'magenta');
+    thrusterTerminal.echo(`Libraries: ${libsToInstall.join(', ')}`, 'dim');
+
+    const success = await runBatchInstall(cliPath, libsToInstall);
+    if (success) {
+        thrusterTerminal.echo("✔ Thruster: All libraries installed successfully!", "green");
+        vscode.window.showInformationMessage("Thruster: Library scan and batch-install complete!");
+    } else {
+        thrusterTerminal.echo("Thruster: Some libraries failed to install.", "red");
+    }
 }
 
 let isBusy = false;
@@ -1201,21 +1495,21 @@ function setBusy(busy) {
 }
 
 async function stopSerialMonitor(verbose = false) {
-    if (!isMonitoring && !terminalInstance) return;
-
-    if (terminalInstance) {
+    if (thrusterTerminal.activeProcess) {
         try {
-            terminalInstance.sendText('\u0003', false);
-            await new Promise(r => setTimeout(r, 350));
-            terminalInstance.sendText('\u0003', false);
-            await new Promise(r => setTimeout(r, 200));
-            if (verbose) {
-                sendTerminalEcho(terminalInstance, `=== Thruster: Serial Monitor Stopped ===`, 'yellow');
+            if (isWin) {
+                cp.execSync(`taskkill /pid ${thrusterTerminal.activeProcess.pid} /T /F`);
+            } else {
+                thrusterTerminal.activeProcess.kill('SIGINT');
             }
         } catch (e) { }
+        thrusterTerminal.activeProcess = null;
     }
     isMonitoring = false;
     updateState();
+    if (verbose) {
+        thrusterTerminal.echo(`=== Thruster: Serial Monitor Stopped ===`, 'yellow');
+    }
 }
 
 function waitForLockRelease(lockPath, maxTimeoutMs = 180000) {
@@ -1267,8 +1561,8 @@ function updateState() {
     }
 }
 
-function getLogStats() {
-    const root = getWorkspaceRoot();
+function getLogStats(targetRoot) {
+    const root = targetRoot || getWorkspaceRoot();
     if (!root) return { flashCount: 0, crashCount: 0, hasLogs: false };
     const logsDir = path.join(root, '.thruster', 'logs');
     const crashesDir = path.join(root, '.thruster', 'crashes');
@@ -2165,6 +2459,52 @@ function activate(context) {
     watcher.onDidDelete(() => updateState());
     context.subscriptions.push(watcher);
 
+    // Watch for git init to inject .gitignore if Thruster logs exist
+    const onGitInit = (uri) => {
+        let root = null;
+        if (uri) {
+            const folder = vscode.workspace.getWorkspaceFolder(uri);
+            if (folder) {
+                root = folder.uri.fsPath;
+            } else {
+                const parentDir = path.dirname(uri.fsPath);
+                if (path.basename(parentDir) === '.git') {
+                    root = path.dirname(parentDir);
+                } else if (path.basename(uri.fsPath) === '.git') {
+                    root = parentDir;
+                }
+            }
+        }
+        if (!root) root = getWorkspaceRoot();
+        if (!root) return;
+
+        const stats = getLogStats(root);
+        const logsDir = path.join(root, '.thruster', 'logs');
+        const crashesDir = path.join(root, '.thruster', 'crashes');
+        if (stats.hasLogs || fs.existsSync(logsDir) || fs.existsSync(crashesDir)) {
+            ensureGitIgnoreForLogs(root);
+        }
+    };
+
+    const gitHeadWatcher = vscode.workspace.createFileSystemWatcher('**/.git/HEAD');
+    gitHeadWatcher.onDidCreate(onGitInit, null, context.subscriptions);
+    context.subscriptions.push(gitHeadWatcher);
+
+    const gitDirWatcher = vscode.workspace.createFileSystemWatcher('**/.git');
+    gitDirWatcher.onDidCreate(onGitInit, null, context.subscriptions);
+    context.subscriptions.push(gitDirWatcher);
+
+    // If active workspace already has git and logs exist, ensure .gitignore
+    const activeRoot = getWorkspaceRoot();
+    if (activeRoot) {
+        const stats = getLogStats(activeRoot);
+        const logsDir = path.join(activeRoot, '.thruster', 'logs');
+        const crashesDir = path.join(activeRoot, '.thruster', 'crashes');
+        if (stats.hasLogs || fs.existsSync(logsDir) || fs.existsSync(crashesDir)) {
+            ensureGitIgnoreForLogs(activeRoot);
+        }
+    }
+
     // Watch terminal closure to reset monitor state
     vscode.window.onDidCloseTerminal((t) => {
         if (t === terminalInstance) {
@@ -2296,20 +2636,20 @@ function activate(context) {
 
         const config = loadConfig();
         const fqbn = (config && config.board) || "esp32:esp32:nodemcu-32s";
-        const term = getTerminal();
+        thrusterTerminal.show(true);
 
         try {
             setBusy(true);
-            const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+            const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath);
             if (res && res.success) {
                 recordSuccessfulCompile(sketchDir, fqbn, res.memory);
                 if (res.memory) {
                     const mem = res.memory;
                     if (mem.flash) {
-                        sendTerminalEcho(term, `📊 Program Storage (Flash): ${mem.flash.used.toLocaleString()} / ${mem.flash.max.toLocaleString()} bytes (${mem.flash.percent}%) [${mem.flash.free.toLocaleString()} bytes free]`, 'cyan');
+                        thrusterTerminal.echo(`📊 Program Storage (Flash): ${mem.flash.used.toLocaleString()} / ${mem.flash.max.toLocaleString()} bytes (${mem.flash.percent}%) [${mem.flash.free.toLocaleString()} bytes free]`, 'cyan');
                     }
                     if (mem.ram) {
-                        sendTerminalEcho(term, `📊 Dynamic Memory (RAM):    ${mem.ram.used.toLocaleString()} / ${mem.ram.max.toLocaleString()} bytes (${mem.ram.percent}%) [${mem.ram.free.toLocaleString()} bytes free]`, 'cyan');
+                        thrusterTerminal.echo(`📊 Dynamic Memory (RAM):    ${mem.ram.used.toLocaleString()} / ${mem.ram.max.toLocaleString()} bytes (${mem.ram.percent}%) [${mem.ram.free.toLocaleString()} bytes free]`, 'cyan');
                     }
                 }
                 vscode.window.showInformationMessage("Thruster: Compilation verified successfully!");
@@ -2352,8 +2692,7 @@ function activate(context) {
             return;
         }
 
-        const term = getTerminal();
-        term.show(true);
+        thrusterTerminal.show(true);
 
         const isUpToDate = isSketchAlreadyCompiled(sketchDir, fqbn);
         const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
@@ -2363,11 +2702,11 @@ function activate(context) {
             setBusy(true);
             let memInfo = null;
             if (isUpToDate) {
-                sendTerminalEcho(term, `=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
-                sendTerminalEcho(term, `=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
+                thrusterTerminal.echo(`=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
+                thrusterTerminal.echo(`=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
                 memInfo = getCachedMemoryInfo(sketchDir);
             } else {
-                const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+                const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath);
                 if (!res || !res.success) {
                     invalidateCompileState(sketchDir);
                     return;
@@ -2379,6 +2718,7 @@ function activate(context) {
             fs.writeFileSync(lockFile, 'busy', 'utf8');
 
             const workspaceDir = getWorkspaceRoot() || sketchDir;
+            ensureGitIgnoreForLogs(workspaceDir);
             const jobFile = path.join(os.tmpdir(), `thruster_job_${Date.now()}.json`);
             const jobData = {
                 cliPath,
@@ -2399,13 +2739,31 @@ function activate(context) {
             const runnerPy = path.join(context.extensionPath, 'scripts', 'flash_runner.py');
             const runnerPs1 = path.join(context.extensionPath, 'scripts', 'flash_runner.ps1');
 
-            let uploadCmd;
-            if (isWin) {
-                uploadCmd = `& powershell -ExecutionPolicy Bypass -File "${runnerPs1}" -JobFile "${jobFile}"`;
-            } else {
-                uploadCmd = `python3 "${runnerPy}" --job "${jobFile}"`;
-            }
-            term.sendText(uploadCmd);
+            await new Promise((resolve) => {
+                let proc;
+                if (isWin) {
+                    proc = cp.spawn('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', runnerPs1, '-JobFile', jobFile]);
+                } else {
+                    proc = cp.spawn('python3', [runnerPy, '--job', jobFile]);
+                }
+                thrusterTerminal.activeProcess = proc;
+                proc.stdout.on('data', d => thrusterTerminal.write(d.toString()));
+                proc.stderr.on('data', d => thrusterTerminal.write(d.toString()));
+                proc.on('close', () => {
+                    if (thrusterTerminal.activeProcess === proc) {
+                        thrusterTerminal.activeProcess = null;
+                    }
+                    resolve();
+                });
+                proc.on('error', (err) => {
+                    thrusterTerminal.echo(`Flash runner error: ${err.message}`, 'red');
+                    if (thrusterTerminal.activeProcess === proc) {
+                        thrusterTerminal.activeProcess = null;
+                    }
+                    resolve();
+                });
+            });
+
             await waitForLockRelease(lockFile);
         } finally {
             try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
@@ -2448,8 +2806,7 @@ function activate(context) {
             return;
         }
 
-        const term = getTerminal();
-        term.show(true);
+        thrusterTerminal.show(true);
 
         const isUpToDate = isSketchAlreadyCompiled(sketchDir, fqbn);
         const lockFile = path.join(os.tmpdir(), `thruster_flash_${Date.now()}.lock`);
@@ -2459,11 +2816,11 @@ function activate(context) {
             setBusy(true);
             let memInfo = null;
             if (isUpToDate) {
-                sendTerminalEcho(term, `=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
-                sendTerminalEcho(term, `=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
+                thrusterTerminal.echo(`=== Thruster: Code unchanged since last compilation for ${fqbn} ===`, 'green');
+                thrusterTerminal.echo(`=== Skipping compile stage and uploading directly to ${port}... ===`, 'cyan');
                 memInfo = getCachedMemoryInfo(sketchDir);
             } else {
-                const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath, term);
+                const res = await compileWithSmartResolver(sketchDir, fqbn, cliPath);
                 if (!res || !res.success) {
                     invalidateCompileState(sketchDir);
                     return;
@@ -2475,6 +2832,7 @@ function activate(context) {
             fs.writeFileSync(lockFile, 'busy', 'utf8');
 
             const workspaceDir = getWorkspaceRoot() || sketchDir;
+            ensureGitIgnoreForLogs(workspaceDir);
             const jobFile = path.join(os.tmpdir(), `thruster_job_${Date.now()}.json`);
             const jobData = {
                 cliPath,
@@ -2495,32 +2853,48 @@ function activate(context) {
             const runnerPy = path.join(context.extensionPath, 'scripts', 'flash_runner.py');
             const runnerPs1 = path.join(context.extensionPath, 'scripts', 'flash_runner.ps1');
 
-            let flashAndMonitorCmd;
-            if (isWin) {
-                flashAndMonitorCmd = `& powershell -ExecutionPolicy Bypass -File "${runnerPs1}" -JobFile "${jobFile}"`;
-            } else {
-                flashAndMonitorCmd = `python3 "${runnerPy}" --job "${jobFile}"`;
-            }
-            term.sendText(flashAndMonitorCmd);
-            await waitForLockRelease(lockFile);
-
-            let uploadSuccess = false;
-            try {
-                if (fs.existsSync(statusFile)) {
-                    const statusVal = fs.readFileSync(statusFile, 'utf8').trim();
-                    uploadSuccess = (statusVal === '0');
-                    fs.unlinkSync(statusFile);
+            await new Promise((resolve) => {
+                let proc;
+                if (isWin) {
+                    proc = cp.spawn('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-File', runnerPs1, '-JobFile', jobFile]);
+                } else {
+                    proc = cp.spawn('python3', [runnerPy, '--job', jobFile]);
                 }
-            } catch (e) { }
+                thrusterTerminal.activeProcess = proc;
+                proc.stdout.on('data', d => {
+                    const s = d.toString();
+                    thrusterTerminal.write(s);
+                    if (s.includes('Thruster Serial Monitor')) {
+                        isMonitoring = true;
+                        updateState();
+                    }
+                });
+                proc.stderr.on('data', d => thrusterTerminal.write(d.toString()));
+                proc.on('close', () => {
+                    if (thrusterTerminal.activeProcess === proc) {
+                        thrusterTerminal.activeProcess = null;
+                    }
+                    isMonitoring = false;
+                    updateState();
+                    resolve();
+                });
+                proc.on('error', (err) => {
+                    thrusterTerminal.echo(`Flash runner error: ${err.message}`, 'red');
+                    if (thrusterTerminal.activeProcess === proc) {
+                        thrusterTerminal.activeProcess = null;
+                    }
+                    isMonitoring = false;
+                    updateState();
+                    resolve();
+                });
+            });
 
-            if (uploadSuccess) {
-                isMonitoring = true;
-                updateState();
-            }
+            await waitForLockRelease(lockFile);
         } finally {
             try { if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch (e) { }
             try { if (fs.existsSync(statusFile)) fs.unlinkSync(statusFile); } catch (e) { }
             setBusy(false);
+            updateState();
         }
     }));
 
@@ -2553,10 +2927,35 @@ function activate(context) {
             return;
         }
 
-        const term = getTerminal();
-        term.show(true);
-        sendTerminalEcho(term, `=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===`, 'green');
-        term.sendText(formatCliCmd(cliPath, `monitor -p "${port}" -c baudrate=${baud}`));
+        thrusterTerminal.show(true);
+        thrusterTerminal.echo(`=== Thruster Serial Monitor (${port} @ ${baud} bps) - Press Ctrl+C to exit ===`, 'green');
+
+        const monitorProc = cp.spawn(cliPath, ['monitor', '-p', port, '-c', `baudrate=${baud}`], {
+            shell: isWin,
+            env: process.env
+        });
+        thrusterTerminal.activeProcess = monitorProc;
+
+        monitorProc.stdout.on('data', d => thrusterTerminal.write(d.toString()));
+        monitorProc.stderr.on('data', d => thrusterTerminal.write(d.toString()));
+
+        monitorProc.on('close', () => {
+            if (thrusterTerminal.activeProcess === monitorProc) {
+                thrusterTerminal.activeProcess = null;
+            }
+            isMonitoring = false;
+            updateState();
+        });
+
+        monitorProc.on('error', (err) => {
+            thrusterTerminal.echo(`Serial monitor error: ${err.message}`, 'red');
+            if (thrusterTerminal.activeProcess === monitorProc) {
+                thrusterTerminal.activeProcess = null;
+            }
+            isMonitoring = false;
+            updateState();
+        });
+
         isMonitoring = true;
         updateState();
     }));
@@ -2660,8 +3059,7 @@ function activate(context) {
             vscode.window.showErrorMessage("No .ino sketch found. Please open an .ino file.");
             return;
         }
-        const term = getTerminal();
-        await scanAndInstallSketchLibraries(sketchDir, cliPath, term);
+        await scanAndInstallSketchLibraries(sketchDir, cliPath);
     }));
 
     // Setup / Locate arduino-cli Command
@@ -2724,14 +3122,8 @@ function activate(context) {
 }
 
 function deactivate() {
-    if (isMonitoring && terminalInstance) {
-        try {
-            terminalInstance.sendText('\u0003', false);
-        } catch (e) { }
-    }
-    if (terminalInstance) {
-        terminalInstance.dispose();
-    }
+    stopSerialMonitor(false);
+    thrusterTerminal.dispose();
 }
 
 module.exports = {

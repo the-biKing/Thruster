@@ -372,7 +372,7 @@ async function toolCompileSketch(args) {
 
     const cmdArgs = ['compile', '--fqbn', fqbn, sketchDir];
     if (args.test_mode) {
-        cmdArgs.push('--build-property', 'build.extra_flags="-DUNIT_TEST_MODE=1 -DTHRUSTER_TEST_MODE=1"');
+        cmdArgs.push('--build-property', 'compiler.cpp.extra_flags="-DUNIT_TEST_MODE=1 -DTHRUSTER_TEST_MODE=1"');
     }
 
     const result = await new Promise((resolve) => {
@@ -518,7 +518,7 @@ async function toolRunSerialTest(args) {
     }
 
     const baud = args.baud_rate || config.baudRate || 115200;
-    const command = args.command !== undefined ? args.command : null;
+    const command = args.command !== undefined ? args.command : 'START_TEST';
     const timeoutMs = args.timeout_ms || 6000;
     const expectedPattern = args.expected_pattern
         ? new RegExp(args.expected_pattern, 'i')
@@ -842,13 +842,13 @@ const TOOLS = [
     },
     {
         name: 'run_serial_test',
-        description: 'Executes an automated unit test over Serial. Connects to the MCU, sends an optional command (or listens directly upon boot), captures assertion outputs ([PASS], [FAIL], [SUMMARY]), and cleanly closes the port so it can be reused immediately.',
+        description: 'Executes an automated unit test over Serial. Connects to the MCU, sends a handshake trigger (default: "START_TEST"), captures assertion outputs ([PASS], [FAIL], [SUMMARY]), and cleanly closes the port so it can be reused immediately.',
         inputSchema: {
             type: 'object',
             properties: {
                 command: {
                     type: 'string',
-                    description: 'Optional command to send over serial. If omitted, listens for unit tests executing in setup() upon boot.'
+                    description: 'Command to send over serial to trigger tests (default: "START_TEST"). Pass empty string to listen passively without sending a handshake.'
                 },
                 expected_pattern: {
                     type: 'string',

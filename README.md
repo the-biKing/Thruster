@@ -23,18 +23,19 @@ graph LR
 ### 1. Preprocessor-Guarded Detachable Testing (`#ifdef UNIT_TEST_MODE`)
 * **Zero Architecture Tax:** Write tests directly alongside your functional logic or in a test block without restructuring your project:
   ```cpp
-  int calculate_pwm_from_voltage(int raw_adc) {
-      if (raw_adc < 1500) return 0; // Cutoff for battery protection
-      return (raw_adc - 1500) * 255 / (4095 - 1500);
+  int clamp_and_scale(int raw, int min_in, int max_in, int out_max) {
+      if (raw <= min_in) return 0;
+      if (raw >= max_in) return out_max;
+      return (int)((long)(raw - min_in) * out_max / (max_in - min_in));
   }
 
   #ifdef UNIT_TEST_MODE
-  void run_motor_tests(void) {
-      bool pass1 = (calculate_pwm_from_voltage(1000) == 0);
-      bool pass2 = (calculate_pwm_from_voltage(4095) == 255);
+  void run_unit_tests(void) {
+      bool pass1 = (clamp_and_scale(500, 1000, 4000, 255) == 0);
+      bool pass2 = (clamp_and_scale(4500, 1000, 4000, 255) == 255);
 
-      Serial.println(pass1 ? "[PASS] Low cutoff" : "[FAIL] Low cutoff");
-      Serial.println(pass2 ? "[PASS] Max PWM" : "[FAIL] Max PWM");
+      Serial.println(pass1 ? "[PASS] Below min clamps to 0" : "[FAIL] Below min clamps to 0");
+      Serial.println(pass2 ? "[PASS] Above max clamps to out_max" : "[FAIL] Above max clamps to out_max");
   }
   #endif
   ```

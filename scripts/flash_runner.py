@@ -62,6 +62,41 @@ def render_progress_bar(pct, elapsed_sec, status=""):
     sys.stdout.write(line)
     sys.stdout.flush()
 
+def ensure_gitignore(ws_dir):
+    if not ws_dir:
+        return
+    git_dir = os.path.join(ws_dir, ".git")
+    if not os.path.exists(git_dir):
+        return
+
+    gitignore_path = os.path.join(ws_dir, ".gitignore")
+    existing = ""
+    if os.path.exists(gitignore_path):
+        try:
+            with open(gitignore_path, "r", encoding="utf-8") as f:
+                existing = f.read()
+        except Exception:
+            existing = ""
+
+    lines = [line.strip() for line in existing.splitlines()]
+    if ".thruster" in lines or ".thruster/" in lines:
+        return
+
+    entries_to_add = []
+    if ".thruster/logs" not in lines and ".thruster/logs/" not in lines:
+        entries_to_add.append(".thruster/logs/")
+    if ".thruster/crashes" not in lines and ".thruster/crashes/" not in lines:
+        entries_to_add.append(".thruster/crashes/")
+
+    if entries_to_add:
+        try:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
+                if existing and not existing.endswith("\n"):
+                    f.write("\n")
+                f.write("# Thruster logs\n" + "\n".join(entries_to_add) + "\n")
+        except Exception:
+            pass
+
 def prune_logs(directory, max_count):
     try:
         if not os.path.isdir(directory):
@@ -216,6 +251,8 @@ def main():
 
     os.makedirs(logs_dir, exist_ok=True)
     os.makedirs(crashes_dir, exist_ok=True)
+
+    ensure_gitignore(workspace_dir)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     full_output_text = "\n".join(all_output_lines)
