@@ -1,18 +1,19 @@
 import os
 import json
 import zipfile
+import html
 
 def build():
     # Read package.json
     with open('package.json', 'r', encoding='utf-8') as f:
         pkg = json.load(f)
 
-    name = pkg.get('name', 'thruster')
-    version = pkg.get('version', '0.2.0')
-    publisher = pkg.get('publisher', 'the-biKing')
-    display_name = pkg.get('displayName', name)
-    description = pkg.get('description', '')
-    categories = ','.join(pkg.get('categories', []))
+    name = html.escape(pkg.get('name', 'thruster'))
+    version = html.escape(pkg.get('version', '0.2.0'))
+    publisher = html.escape(pkg.get('publisher', 'the-biKing'))
+    display_name = html.escape(pkg.get('displayName', name))
+    description = html.escape(pkg.get('description', ''))
+    categories = html.escape(','.join(pkg.get('categories', [])))
 
     vsixmanifest = f'''<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
@@ -76,6 +77,7 @@ def build():
                 os.remove(old_file)
             except OSError:
                 pass
+
     files_to_pack = [
         ('package.json', 'extension/package.json'),
         ('extension.js', 'extension/extension.js'),

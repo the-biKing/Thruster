@@ -38,9 +38,13 @@ jobs:
 
       - name: Publish to Open VSX
         env:
-          OVSX_TOKEN: ${{ secrets.OVSX_PAT || secrets.OPEN_VSX_TOKEN }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT || secrets.OPEN_VSX_TOKEN || secrets.OVSX_TOKEN || secrets.OPENVSX_TOKEN }}
         run: |
-          npx ovsx publish "${{ steps.package.outputs.vsix_file }}" -p "$OVSX_TOKEN"
+          if [ -z "$OVSX_PAT" ]; then
+            echo "::error::Open VSX token secret is missing or empty! Please check your repository secrets (checked OVSX_PAT, OPEN_VSX_TOKEN, OVSX_TOKEN, OPENVSX_TOKEN)."
+            exit 1
+          fi
+          npx ovsx publish "${{ steps.package.outputs.vsix_file }}" -p "$OVSX_PAT"
 
       - name: Attach VSIX to GitHub Release
         uses: softprops/action-gh-release@v2

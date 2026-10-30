@@ -1,7 +1,7 @@
 {
   "name": "thruster",
   "displayName": "Thruster",
-  "description": "Agent-driven MCU development platform for ESP32, Arduino, RP2040, and STM32. Features preprocessor-guarded unit testing via Serial, MCP Server, and one-click compile & flash.",
+  "description": "Agent-driven MCU development platform for ESP32, Arduino, RP2040, and STM32. Features preprocessor-guarded unit testing via Serial, MCP Server, and one-click compile and flash.",
   "version": "1.0.0",
   "publisher": "the-biKing",
   "license": "MIT",
